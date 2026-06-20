@@ -34,7 +34,7 @@ struct WatchRootView: View {
         VStack(spacing: 0) {
             Text(Display.int(model.workout.currentBPM))
                 .font(.system(size: 70, weight: .bold, design: .rounded))
-                .foregroundStyle(.red)
+                .foregroundStyle(hrColor)
                 .monospacedDigit()
                 .contentTransition(.numericText())
                 .lineLimit(1)
@@ -44,6 +44,18 @@ struct WatchRootView: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
+    }
+
+    /// Heart rate vs. the target sent from the phone: red over, green within
+    /// ±3 bpm, white below (and white when HR or the target is unknown).
+    private var hrColor: Color {
+        guard let bpm = model.workout.currentBPM,
+            let target = model.connectivity.rideStatus?.targetHeartRate
+        else { return .white }
+        let delta = bpm - Double(target)
+        if delta > 3 { return .red }
+        if delta < -3 { return .white }
+        return .green
     }
 
     private func targets(_ status: RideStatus) -> some View {
