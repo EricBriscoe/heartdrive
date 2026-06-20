@@ -4,32 +4,42 @@ struct WatchRootView: View {
     @State private var model = WatchModel.shared
 
     var body: some View {
+        // ScrollView whose content fills the frame: it looks fixed and won't
+        // scroll while everything fits, but can't clip content (3-digit HR, an
+        // error line, smaller watches) the way a bare VStack would.
         ScrollView {
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
+                Spacer(minLength: 0)
                 heartRate
                 if let status = model.connectivity.rideStatus {
                     targets(status)
                 }
+                Spacer(minLength: 0)
                 controlButton
                 if let error = model.workout.lastError {
                     Text(error)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
+                        .lineLimit(2)
                 }
             }
-            .padding(.horizontal, 4)
+            .frame(maxWidth: .infinity)
+            .containerRelativeFrame(.vertical)
         }
+        .padding(.horizontal, 4)
     }
 
     private var heartRate: some View {
-        VStack(spacing: 2) {
-            Image(systemName: "heart.fill")
-                .foregroundStyle(.red)
-                .symbolEffect(.pulse, isActive: model.isRunning)
+        VStack(spacing: 0) {
             Text(Display.int(model.workout.currentBPM))
-                .font(.system(size: 46, weight: .bold, design: .rounded))
+                .font(.system(size: 70, weight: .bold, design: .rounded))
+                .foregroundStyle(.red)
+                .monospacedDigit()
                 .contentTransition(.numericText())
+                .lineLimit(1)
+                .minimumScaleFactor(0.5)
+                .frame(maxWidth: .infinity)
             Text("BPM")
                 .font(.caption2)
                 .foregroundStyle(.secondary)
