@@ -13,6 +13,7 @@ final class PhoneConnectivity: NSObject {
 
     @ObservationIgnored var onHeartRate: ((HeartRateSample) -> Void)?
     @ObservationIgnored var onWorkoutState: ((WorkoutStateUpdate) -> Void)?
+    @ObservationIgnored var onTargetHeartRate: ((Int) -> Void)?
 
     private var session: WCSession?
 
@@ -31,7 +32,10 @@ final class PhoneConnectivity: NSObject {
 
     func send(status: RideStatus) {
         guard let message = try? WatchMessage(.rideStatus, status) else { return }
-        session?.deliver(message)
+        // Application context, not sendMessage: it coalesces to the latest value,
+        // needs no reachability, and never backs up a queue, so 5s status updates
+        // can't flood the watch↔phone link that the HealthKit HR mirror rides on.
+        try? session?.updateApplicationContext(message.dictionary)
     }
 
     private func handle(_ dictionary: [String: Any]) {
@@ -46,6 +50,8 @@ final class PhoneConnectivity: NSObject {
                     self.watchWorkoutState = update.state
                     self.onWorkoutState?(update)
                 }
+            case .targetHeartRate:
+                if let update = message.decode(TargetHeartRateUpdate.self) { self.onTargetHeartRate?(update.bpm) }
             case .command, .rideStatus:
                 break
             }

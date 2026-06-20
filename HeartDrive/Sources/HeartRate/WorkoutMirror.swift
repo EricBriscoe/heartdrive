@@ -72,6 +72,12 @@ extension WorkoutMirror: HKWorkoutSessionDelegate {
     }
 
     func workoutSession(_ workoutSession: HKWorkoutSession, didDisconnectFromRemoteDeviceWithError error: Error?) {
-        DispatchQueue.main.async { [weak self] in self?.isMirroring = false }
+        // The mirrored session is invalid after a disconnect; drop it so the
+        // still-registered handler cleanly adopts the fresh session the watch's
+        // hard re-mirror creates.
+        DispatchQueue.main.async { [weak self] in
+            self?.isMirroring = false
+            self?.mirroredSession = nil
+        }
     }
 }

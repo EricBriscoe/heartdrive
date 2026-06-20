@@ -21,15 +21,16 @@ final class WatchModel {
             switch command {
             case .startWorkout: self?.workout.ensureActive()
             case .stopWorkout: self?.stop()
-            case .remirror: self?.workout.remirror()
+            case .recoverMirror: self?.workout.hardRemirror()  // phone isn't getting HR; rebuild the mirror
             }
         }
-        // When the phone reconnects (e.g. after a restart), re-announce that a
-        // workout is running and re-establish the mirror so HR re-attaches.
+        // When the phone reconnects (e.g. after a restart), just re-announce that a
+        // workout is running. Re-mirroring is left to the phone's recovery kick when
+        // it isn't receiving HR, so a healthy mirror isn't torn down on
+        // every wrist-raise (which flaps reachability).
         connectivity.onReachable = { [weak self] in
             guard let self, self.workout.isRunning else { return }
             self.connectivity.sendWorkoutState(.running)
-            self.workout.ensureActive()
         }
         connectivity.activate()
         workout.requestAuthorization()
@@ -37,4 +38,5 @@ final class WatchModel {
 
     func start() { workout.start() }
     func stop() { workout.end(save: connectivity.saveWorkoutPreference) }
+    func setTargetHeartRate(_ bpm: Int) { connectivity.sendTargetHeartRate(bpm) }
 }

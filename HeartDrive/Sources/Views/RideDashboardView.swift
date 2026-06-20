@@ -54,15 +54,14 @@ struct RideDashboardView: View {
     private var heartRateHero: some View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             let link = model.watchLink
-            let bpm = model.heart.currentBPM
             let target = model.settings.targetHeartRate
-            let inBand = bpm.map { abs($0 - Double(target)) <= 3 } ?? false
+            let shown = link == .idle ? nil : model.heart.currentBPM
             VStack(spacing: 4) {
-                Text(Display.int(link == .idle ? nil : bpm))
+                Text(Display.int(shown))
                     .font(.system(size: 86, weight: .bold, design: .rounded))
-                    .foregroundStyle(link.heroColor(inBand: inBand))
+                    .foregroundStyle(Color.heartRateZone(bpm: shown, target: target))
                     .contentTransition(.numericText())
-                Text("BPM · target \(target)")
+                Text("BPM")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
             }

@@ -20,6 +20,7 @@ final class WatchWorkoutManager: NSObject {
     private let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
 
     private var mirroring = false
+    private var remirrorInFlight = false
     private var mirrorWatchdog: Timer?
     private var startDate: Date?
     private let minWorkoutDuration: TimeInterval = 120
@@ -76,15 +77,34 @@ final class WatchWorkoutManager: NSObject {
         if session == nil {
             start()
         } else if session?.state == .running {
-            startMirroring()
+            hardRemirror()
         }
     }
 
-    /// Re-establish the mirror for an already-running workout, without ever
-    /// starting a new one, so a late recovery nudge can't resurrect a workout
-    /// the user has stopped.
-    func remirror() {
-        if session?.state == .running { startMirroring() }
+    /// Fully rebuild the mirror by stopping and restarting it on the still-running session.
+    /// Only a stop→start makes the phone's `workoutSessionMirroringStartHandler`
+    /// re-fire and re-adopt a fresh session; a soft re-start does not. This is the
+    /// only in-process recovery from a silently-dead mirror (no app restart), which
+    /// the watchOS 26 mirror-disconnect bug makes essential.
+    func hardRemirror() {
+        guard let session, session.state == .running, !remirrorInFlight else { return }
+        remirrorInFlight = true
+        mirroring = false
+        session.stopMirroringToCompanionDevice { [weak self] _, _ in
+            DispatchQueue.main.async {
+                guard let self, let session = self.session, session.state == .running else {
+                    self?.remirrorInFlight = false
+                    return
+                }
+                session.startMirroringToCompanionDevice { [weak self] success, error in
+                    DispatchQueue.main.async {
+                        self?.remirrorInFlight = false
+                        self?.mirroring = success
+                        if let error { self?.lastError = "Mirror: \(error.localizedDescription)" }
+                    }
+                }
+            }
+        }
     }
 
     func end(save: Bool) {
@@ -130,7 +150,7 @@ final class WatchWorkoutManager: NSObject {
         mirrorWatchdog?.invalidate()
         let timer = Timer(timeInterval: 6, repeats: true) { [weak self] _ in
             guard let self, self.session?.state == .running, !self.mirroring else { return }
-            self.startMirroring()
+            self.hardRemirror()
         }
         RunLoop.main.add(timer, forMode: .common)
         mirrorWatchdog = timer
@@ -166,10 +186,11 @@ extension WatchWorkoutManager: HKWorkoutSessionDelegate {
     }
 
     func workoutSession(_ workoutSession: HKWorkoutSession, didDisconnectFromRemoteDeviceWithError error: Error?) {
-        // The phone-side mirror dropped; flag it so the watchdog re-establishes it.
+        // The mirror dropped (including the watchOS 26 self-disconnect bug). Once
+        // this fires the mirrored session is invalid, so rebuild it fully (stop→start).
         DispatchQueue.main.async { [weak self] in
             self?.mirroring = false
-            self?.startMirroring()
+            self?.hardRemirror()
         }
     }
 }

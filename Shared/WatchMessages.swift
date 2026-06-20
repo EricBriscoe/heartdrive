@@ -6,6 +6,7 @@ enum WatchMessageType: String, Codable {
     case workoutState
     case command
     case rideStatus
+    case targetHeartRate
 }
 
 struct HeartRateSample: Codable, Equatable {
@@ -27,13 +28,17 @@ struct WorkoutStateUpdate: Codable, Equatable {
 enum PhoneCommand: String, Codable {
     case startWorkout
     case stopWorkout
-    case remirror  // re-establish the mirror for a running workout; never starts one
+    case recoverMirror  // phone isn't receiving HR; hard-rebuild the mirror
 }
 
 struct RideStatus: Codable, Equatable {
     var targetHeartRate: Int
     var targetPowerWatts: Int?
     var saveWorkout: Bool?
+}
+
+struct TargetHeartRateUpdate: Codable, Equatable {
+    var bpm: Int
 }
 
 /// A type-tagged envelope that round-trips through WatchConnectivity's

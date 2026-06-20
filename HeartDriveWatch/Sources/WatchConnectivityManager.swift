@@ -40,6 +40,11 @@ final class WatchConnectivityManager: NSObject {
         session?.deliver(message)
     }
 
+    func sendTargetHeartRate(_ bpm: Int) {
+        guard let message = try? WatchMessage(.targetHeartRate, TargetHeartRateUpdate(bpm: bpm)) else { return }
+        session?.deliver(message)
+    }
+
     private func handle(_ dictionary: [String: Any]) {
         guard let message = WatchMessage(dictionary: dictionary) else { return }
         DispatchQueue.main.async { [weak self] in
@@ -53,7 +58,7 @@ final class WatchConnectivityManager: NSObject {
                         UserDefaults.standard.set(save, forKey: Self.saveWorkoutKey)
                     }
                 }
-            case .heartRate, .workoutState:
+            case .heartRate, .workoutState, .targetHeartRate:
                 break
             }
         }
@@ -64,6 +69,8 @@ extension WatchConnectivityManager: WCSessionDelegate {
     func session(
         _ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?
     ) {
+        let context = session.receivedApplicationContext
+        if !context.isEmpty { handle(context) }
         DispatchQueue.main.async { [weak self] in
             self?.isReachable = session.isReachable
             if session.isReachable { self?.onReachable?() }
@@ -80,4 +87,8 @@ extension WatchConnectivityManager: WCSessionDelegate {
     func session(_ session: WCSession, didReceiveMessage message: [String: Any]) { handle(message) }
 
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) { handle(userInfo) }
+
+    func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        handle(applicationContext)
+    }
 }

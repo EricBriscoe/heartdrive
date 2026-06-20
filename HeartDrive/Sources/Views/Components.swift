@@ -105,11 +105,4 @@ extension WatchLinkState {
         case .idle: return "Start on Watch"
         }
     }
-
-    func heroColor(inBand: Bool) -> Color {
-        switch self {
-        case .live: return inBand ? .green : .primary
-        case .reconnecting, .lost, .idle: return .secondary
-        }
-    }
 }
