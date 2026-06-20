@@ -12,7 +12,7 @@ final class PhoneConnectivity: NSObject {
     private(set) var lastError: String?
 
     @ObservationIgnored var onHeartRate: ((HeartRateSample) -> Void)?
-    @ObservationIgnored var onWorkoutState: ((WorkoutStateUpdate) -> Void)?
+    @ObservationIgnored var onWorkoutState: ((WorkoutState) -> Void)?
     @ObservationIgnored var onTargetHeartRate: ((Int) -> Void)?
 
     private var session: WCSession?
@@ -38,20 +38,22 @@ final class PhoneConnectivity: NSObject {
         try? session?.updateApplicationContext(message.dictionary)
     }
 
-    private func handle(_ dictionary: [String: Any]) {
+    /// `driveControl` is false for the context read on activation: that value is
+    /// persisted state and may be stale, so it only refreshes the target + display
+    /// It must never drive start/stop. Live deltas drive control.
+    private func handle(_ dictionary: [String: Any], driveControl: Bool = true) {
         guard let message = WatchMessage(dictionary: dictionary) else { return }
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             switch message.type {
             case .heartRate:
                 if let sample = message.decode(HeartRateSample.self) { self.onHeartRate?(sample) }
-            case .workoutState:
-                if let update = message.decode(WorkoutStateUpdate.self) {
-                    self.watchWorkoutState = update.state
-                    self.onWorkoutState?(update)
+            case .watchState:
+                if let snapshot = message.decode(WatchSnapshot.self) {
+                    self.watchWorkoutState = snapshot.workoutState
+                    if let target = snapshot.target { self.onTargetHeartRate?(target) }
+                    if driveControl { self.onWorkoutState?(snapshot.workoutState) }
                 }
-            case .targetHeartRate:
-                if let update = message.decode(TargetHeartRateUpdate.self) { self.onTargetHeartRate?(update.bpm) }
             case .command, .rideStatus:
                 break
             }
@@ -63,6 +65,8 @@ extension PhoneConnectivity: WCSessionDelegate {
     func session(
         _ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?
     ) {
+        let context = session.receivedApplicationContext
+        if !context.isEmpty { handle(context, driveControl: false) }
         DispatchQueue.main.async { [weak self] in
             self?.isReachable = session.isReachable
             if let error { self?.lastError = error.localizedDescription }
@@ -79,6 +83,10 @@ extension PhoneConnectivity: WCSessionDelegate {
 
     func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
         handle(userInfo)
+    }
+
+    func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        handle(applicationContext)
     }
 
     func sessionDidBecomeInactive(_ session: WCSession) {}

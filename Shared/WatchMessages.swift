@@ -3,10 +3,9 @@ import WatchConnectivity
 
 enum WatchMessageType: String, Codable {
     case heartRate
-    case workoutState
     case command
     case rideStatus
-    case targetHeartRate
+    case watchState
 }
 
 struct HeartRateSample: Codable, Equatable {
@@ -21,10 +20,6 @@ enum WorkoutState: String, Codable {
     case ended
 }
 
-struct WorkoutStateUpdate: Codable, Equatable {
-    var state: WorkoutState
-}
-
 enum PhoneCommand: String, Codable {
     case startWorkout
     case stopWorkout
@@ -37,8 +32,14 @@ struct RideStatus: Codable, Equatable {
     var saveWorkout: Bool?
 }
 
-struct TargetHeartRateUpdate: Codable, Equatable {
-    var bpm: Int
+/// The watch's latest state, sent to the phone over `updateApplicationContext`
+/// (reliable + coalesced, unlike sendMessage/transferUserInfo watch→phone).
+/// `sentAt` makes every payload unique so the system never silently drops a
+/// repeated value because it deduplicates byte-identical application contexts.
+struct WatchSnapshot: Codable, Equatable {
+    var sentAt: Date
+    var workoutState: WorkoutState
+    var target: Int?
 }
 
 /// A type-tagged envelope that round-trips through WatchConnectivity's

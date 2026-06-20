@@ -21,6 +21,8 @@ final class WatchConnectivityManager: NSObject {
 
     private static let saveWorkoutKey = "hd.saveWorkout"
     private var session: WCSession?
+    private var snapshotState: WorkoutState = .notStarted
+    private var snapshotTarget: Int?
 
     func activate() {
         guard WCSession.isSupported() else { return }
@@ -35,14 +37,23 @@ final class WatchConnectivityManager: NSObject {
         session?.deliver(message)
     }
 
-    func sendWorkoutState(_ state: WorkoutState) {
-        guard let message = try? WatchMessage(.workoutState, WorkoutStateUpdate(state: state)) else { return }
-        session?.deliver(message)
+    func updateWorkoutState(_ state: WorkoutState) {
+        snapshotState = state
+        sendSnapshot()
     }
 
-    func sendTargetHeartRate(_ bpm: Int) {
-        guard let message = try? WatchMessage(.targetHeartRate, TargetHeartRateUpdate(bpm: bpm)) else { return }
-        session?.deliver(message)
+    func updateTarget(_ bpm: Int) {
+        snapshotTarget = bpm
+        sendSnapshot()
+    }
+
+    /// Latest workout state + crown target → phone via application context:
+    /// reliable + coalesced (watch→phone sendMessage/transferUserInfo isn't), with
+    /// a fresh `sentAt` each time so the system never silently dedups it.
+    private func sendSnapshot() {
+        let snapshot = WatchSnapshot(sentAt: Date(), workoutState: snapshotState, target: snapshotTarget)
+        guard let message = try? WatchMessage(.watchState, snapshot) else { return }
+        try? session?.updateApplicationContext(message.dictionary)
     }
 
     private func handle(_ dictionary: [String: Any]) {
@@ -58,7 +69,7 @@ final class WatchConnectivityManager: NSObject {
                         UserDefaults.standard.set(save, forKey: Self.saveWorkoutKey)
                     }
                 }
-            case .heartRate, .workoutState, .targetHeartRate:
+            case .heartRate, .watchState:
                 break
             }
         }

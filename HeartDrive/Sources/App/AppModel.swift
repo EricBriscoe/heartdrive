@@ -45,7 +45,12 @@ final class AppModel {
         controller = ErgController(config: AppModel.config(from: settings.snapshot))
         connectivity.onHeartRate = { [weak self] sample in self?.ingestHeartRate(sample) }
         workoutMirror.onHeartRate = { [weak self] sample in self?.ingestHeartRate(sample) }
-        connectivity.onWorkoutState = { [weak self] update in self?.handleWatchWorkout(update.state) }
+        // Start is driven by the live mirror connection (onStateChange); the phone
+        // should only engage once it has heart rate. The watch's snapshot
+        // drives only Stop, so a stale persisted `.running` can't auto-restart a ride.
+        connectivity.onWorkoutState = { [weak self] state in
+            if state == .ended { self?.handleWatchWorkout(.ended) }
+        }
         connectivity.onTargetHeartRate = { [weak self] bpm in self?.setTargetHeartRate(bpm) }
         workoutMirror.onStateChange = { [weak self] state in self?.handleWatchWorkout(state) }
         connectivity.activate()

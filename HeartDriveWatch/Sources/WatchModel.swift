@@ -15,7 +15,7 @@ final class WatchModel {
             self?.connectivity.sendHeartRate(sample)
         }
         workout.onStateChange = { [weak self] state in
-            self?.connectivity.sendWorkoutState(state)
+            self?.connectivity.updateWorkoutState(state)
         }
         connectivity.onCommand = { [weak self] command in
             switch command {
@@ -30,7 +30,7 @@ final class WatchModel {
         // every wrist-raise (which flaps reachability).
         connectivity.onReachable = { [weak self] in
             guard let self, self.workout.isRunning else { return }
-            self.connectivity.sendWorkoutState(.running)
+            self.connectivity.updateWorkoutState(.running)
         }
         connectivity.activate()
         workout.requestAuthorization()
@@ -38,5 +38,5 @@ final class WatchModel {
 
     func start() { workout.start() }
     func stop() { workout.end(save: connectivity.saveWorkoutPreference) }
-    func setTargetHeartRate(_ bpm: Int) { connectivity.sendTargetHeartRate(bpm) }
+    func setTargetHeartRate(_ bpm: Int) { connectivity.updateTarget(bpm) }
 }
