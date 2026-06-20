@@ -21,6 +21,8 @@ final class WatchWorkoutManager: NSObject {
 
     private var mirroring = false
     private var mirrorWatchdog: Timer?
+    private var startDate: Date?
+    private let minWorkoutDuration: TimeInterval = 120
 
     func requestAuthorization() {
         guard HKHealthStore.isHealthDataAvailable() else { return }
@@ -57,6 +59,7 @@ final class WatchWorkoutManager: NSObject {
             self.builder = builder
 
             let startDate = Date()
+            self.startDate = startDate
             session.startActivity(with: startDate)
             builder.beginCollection(withStart: startDate) { [weak self] _, error in
                 if let error { DispatchQueue.main.async { self?.lastError = error.localizedDescription } }
@@ -84,18 +87,31 @@ final class WatchWorkoutManager: NSObject {
         if session?.state == .running { startMirroring() }
     }
 
-    func end() {
+    func end(save: Bool) {
         mirrorWatchdog?.invalidate()
         mirrorWatchdog = nil
         mirroring = false
-        guard let session, let builder else { return }
+        guard let session = self.session, let builder = self.builder else { return }
+        // Tear down synchronously so a second stop (a double-tap, or the phone
+        // echoing the command) is a no-op and can't double-finish the builder.
+        self.session = nil
+        self.builder = nil
+        isRunning = false
+        let elapsed = startDate.map { Date().timeIntervalSince($0) } ?? 0
+        startDate = nil
+
         session.end()
-        builder.endCollection(withEnd: Date()) { [weak self] _, _ in
-            builder.finishWorkout { _, _ in }
-            DispatchQueue.main.async {
-                self?.session = nil
-                self?.builder = nil
-                self?.isRunning = false
+        // Only persist real rides; skip short start/stops and sessions the rider
+        // opted not to save, so they don't clutter Apple Health. Discard directly:
+        // calling endCollection first would log a spurious state-machine error.
+        guard save, elapsed >= minWorkoutDuration else {
+            builder.discardWorkout()
+            return
+        }
+        builder.endCollection(withEnd: Date()) { [weak self] _, error in
+            if let error { DispatchQueue.main.async { self?.lastError = error.localizedDescription } }
+            builder.finishWorkout { [weak self] _, error in
+                if let error { DispatchQueue.main.async { self?.lastError = error.localizedDescription } }
             }
         }
     }

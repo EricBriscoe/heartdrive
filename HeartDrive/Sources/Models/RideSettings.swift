@@ -10,6 +10,7 @@ struct RideSettings: Codable, Equatable {
     var broadcastToZwift: Bool = false
     var cadenceTarget: Int = 90
     var showCadenceGuide: Bool = false
+    var saveWorkoutToHealth: Bool = false
 }
 
 extension RideSettings {
@@ -29,6 +30,8 @@ extension RideSettings {
         cadenceTarget = try container.decodeIfPresent(Int.self, forKey: .cadenceTarget) ?? defaults.cadenceTarget
         showCadenceGuide =
             try container.decodeIfPresent(Bool.self, forKey: .showCadenceGuide) ?? defaults.showCadenceGuide
+        saveWorkoutToHealth =
+            try container.decodeIfPresent(Bool.self, forKey: .saveWorkoutToHealth) ?? defaults.saveWorkoutToHealth
     }
 }
 
@@ -42,6 +45,7 @@ final class SettingsStore {
     var broadcastToZwift: Bool
     var cadenceTarget: Int
     var showCadenceGuide: Bool
+    var saveWorkoutToHealth: Bool
 
     @ObservationIgnored private static let storageKey = "rideSettings"
 
@@ -55,6 +59,7 @@ final class SettingsStore {
         broadcastToZwift = loaded.broadcastToZwift
         cadenceTarget = loaded.cadenceTarget
         showCadenceGuide = loaded.showCadenceGuide
+        saveWorkoutToHealth = loaded.saveWorkoutToHealth
     }
 
     var snapshot: RideSettings {
@@ -66,7 +71,8 @@ final class SettingsStore {
             aggressiveness: aggressiveness,
             broadcastToZwift: broadcastToZwift,
             cadenceTarget: cadenceTarget,
-            showCadenceGuide: showCadenceGuide)
+            showCadenceGuide: showCadenceGuide,
+            saveWorkoutToHealth: saveWorkoutToHealth)
     }
 
     func save() {

@@ -9,9 +9,17 @@ final class WatchConnectivityManager: NSObject {
     private(set) var rideStatus: RideStatus?
     private(set) var isReachable = false
 
+    /// The rider's "save ride to Health" choice, persisted so it survives a
+    /// mid-ride watch relaunch (which clears the in-memory rideStatus). Defaults
+    /// to false (discard) only if the phone has never sent a status this install.
+    var saveWorkoutPreference: Bool {
+        rideStatus?.saveWorkout ?? UserDefaults.standard.bool(forKey: Self.saveWorkoutKey)
+    }
+
     @ObservationIgnored var onCommand: ((PhoneCommand) -> Void)?
     @ObservationIgnored var onReachable: (() -> Void)?
 
+    private static let saveWorkoutKey = "hd.saveWorkout"
     private var session: WCSession?
 
     func activate() {
@@ -39,7 +47,12 @@ final class WatchConnectivityManager: NSObject {
             case .command:
                 if let command = message.decode(PhoneCommand.self) { self?.onCommand?(command) }
             case .rideStatus:
-                if let status = message.decode(RideStatus.self) { self?.rideStatus = status }
+                if let status = message.decode(RideStatus.self) {
+                    self?.rideStatus = status
+                    if let save = status.saveWorkout {
+                        UserDefaults.standard.set(save, forKey: Self.saveWorkoutKey)
+                    }
+                }
             case .heartRate, .workoutState:
                 break
             }

@@ -33,6 +33,7 @@ enum PhoneCommand: String, Codable {
 struct RideStatus: Codable, Equatable {
     var targetHeartRate: Int
     var targetPowerWatts: Int?
+    var saveWorkout: Bool?
 }
 
 /// A type-tagged envelope that round-trips through WatchConnectivity's

@@ -36,5 +36,5 @@ final class WatchModel {
     }
 
     func start() { workout.start() }
-    func stop() { workout.end() }
+    func stop() { workout.end(save: connectivity.saveWorkoutPreference) }
 }

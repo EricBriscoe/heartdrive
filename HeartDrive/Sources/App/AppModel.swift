@@ -161,7 +161,9 @@ final class AppModel {
             trainer.setTargetPower(watts)
         }
         connectivity.send(
-            status: RideStatus(targetHeartRate: settings.targetHeartRate, targetPowerWatts: update.targetPower))
+            status: RideStatus(
+                targetHeartRate: settings.targetHeartRate, targetPowerWatts: update.targetPower,
+                saveWorkout: settings.saveWorkoutToHealth))
     }
 
     private static func config(from settings: RideSettings) -> ErgControllerConfig {

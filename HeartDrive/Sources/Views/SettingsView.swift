@@ -54,6 +54,16 @@ struct SettingsView: View {
                         "Gentle is the smoothest and most stable. Heart rate reacts slowly (10–30s), so even Responsive stays deliberately damped."
                     )
                 }
+
+                Section {
+                    Toggle("Save rides to Apple Health", isOn: $settings.saveWorkoutToHealth)
+                } header: {
+                    Text("Workout history")
+                } footer: {
+                    Text(
+                        "When on, rides longer than 2 minutes are saved to Apple Health and count toward your activity rings. Short start/stops are always discarded so they don't clutter your history."
+                    )
+                }
             }
             .navigationTitle("Settings")
             .toolbar {
