@@ -1,4 +1,3 @@
-import CoreBluetooth
 import Foundation
 
 /// Abstracts the two ways a Wahoo trainer accepts ERG target-power commands:
@@ -6,8 +5,6 @@ import Foundation
 /// a strategy based on which control characteristic the trainer exposes.
 protocol ErgControlStrategy {
     var displayName: String { get }
-    var controlServiceUUID: CBUUID { get }
-    var controlCharacteristicUUID: CBUUID { get }
     /// FTMS acknowledges every command via indications and must be subscribed
     /// before any write; the Wahoo characteristic does not.
     var needsIndications: Bool { get }
@@ -19,8 +16,6 @@ protocol ErgControlStrategy {
 
 struct FTMSErgStrategy: ErgControlStrategy {
     let displayName = "FTMS"
-    let controlServiceUUID = BLEUUID.fitnessMachineService
-    let controlCharacteristicUUID = BLEUUID.fitnessMachineControlPoint
     let needsIndications = true
     func prepareCommands() -> [Data] { [FTMSControlPoint.requestControl] }
     func setTargetPowerCommand(watts: Int) -> Data { FTMSControlPoint.setTargetPower(watts: watts) }
@@ -28,8 +23,6 @@ struct FTMSErgStrategy: ErgControlStrategy {
 
 struct WahooErgStrategy: ErgControlStrategy {
     let displayName = "Wahoo"
-    let controlServiceUUID = BLEUUID.cyclingPowerService
-    let controlCharacteristicUUID = BLEUUID.wahooControlPoint
     let needsIndications = false
     func prepareCommands() -> [Data] { [WahooTrainer.unlock] }
     func setTargetPowerCommand(watts: Int) -> Data { WahooTrainer.setErgPower(watts: watts) }

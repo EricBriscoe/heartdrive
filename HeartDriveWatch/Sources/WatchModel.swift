@@ -17,23 +17,24 @@ final class WatchModel {
 
     private init() {
         workout.onHeartRate = { [weak self] in self?.sendHeartRate() }
+        connectivity.onRequestRestart = { [weak self] in self?.restart() }
         connectivity.activate()
         workout.requestAuthorization()
     }
 
     private func sendHeartRate() {
         guard let bpm = workout.currentBPM, let at = workout.currentSampleAt else { return }
-        connectivity.send(HeartRate(bpm: bpm, at: at, sentAt: Date()))
+        connectivity.record(HeartRate(bpm: bpm, at: at))
     }
 
     func start() { workout.start() }
-    func stop() { workout.end(save: false) }
+    func stop() { workout.end() }
 
     /// Restart heart-rate monitoring: tear the workout down (and with it the HR
     /// stream) and start a clean one. This is the local recovery path when the feed
     /// stalls; it doesn't depend on the phone, which has no channel back to the watch.
     func restart() {
-        workout.end(save: false)
+        workout.end()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.workout.start() }
     }
 }

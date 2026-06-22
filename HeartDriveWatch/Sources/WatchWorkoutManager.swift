@@ -2,10 +2,9 @@ import Foundation
 import HealthKit
 import Observation
 
-/// Runs the indoor-cycling HKWorkoutSession on the watch. Its only jobs are to read
-/// live heart rate (the session is what unlocks high-rate HR and background runtime)
-/// and report the latest reading. Cross-device delivery is entirely the connectivity
-/// layer's idempotent state push; there is no workout mirroring here anymore.
+/// Runs the indoor-cycling HKWorkoutSession on the watch. Its only jobs are to read live
+/// heart rate (the session is what unlocks high-rate HR and background runtime) and
+/// report the latest reading; the connectivity layer handles delivery to the phone.
 @Observable
 final class WatchWorkoutManager: NSObject {
     private(set) var currentBPM: Double?
@@ -19,9 +18,6 @@ final class WatchWorkoutManager: NSObject {
     private var session: HKWorkoutSession?
     private var builder: HKLiveWorkoutBuilder?
     private let heartRateUnit = HKUnit.count().unitDivided(by: .minute())
-
-    private var startDate: Date?
-    private let minWorkoutDuration: TimeInterval = 120
 
     func requestAuthorization() {
         guard HKHealthStore.isHealthDataAvailable() else { return }
@@ -40,11 +36,11 @@ final class WatchWorkoutManager: NSObject {
         }
     }
 
-    /// Begins a workout. Call on the main thread: the `session == nil` guard that keeps
-    /// the two start paths (the watch's own button and the phone's reconcile) from
-    /// making a second session isn't internally synchronized.
+    /// Begins a workout. Call on the main thread: the `session == nil` guard that keeps a
+    /// double-tap (or a restart overlap) from making a second session isn't synchronized.
     func start() {
         guard HKHealthStore.isHealthDataAvailable(), session == nil else { return }
+        lastError = nil
         let configuration = HKWorkoutConfiguration()
         configuration.activityType = .cycling
         configuration.locationType = .indoor
@@ -58,7 +54,6 @@ final class WatchWorkoutManager: NSObject {
             self.builder = builder
 
             let startDate = Date()
-            self.startDate = startDate
             session.startActivity(with: startDate)
             builder.beginCollection(withStart: startDate) { [weak self] _, error in
                 if let error { DispatchQueue.main.async { self?.lastError = error.localizedDescription } }
@@ -68,32 +63,18 @@ final class WatchWorkoutManager: NSObject {
         }
     }
 
-    func end(save: Bool) {
+    /// Ends and discards the workout. This app controls a trainer, it doesn't log rides.
+    /// Tears down synchronously so a second stop (a double-tap or a restart overlap) is a
+    /// no-op and can't double-finish the builder.
+    func end() {
         guard let session = self.session, let builder = self.builder else { return }
-        // Tear down synchronously so a second stop (a double-tap, or the phone's
-        // reconcile echoing the change) is a no-op and can't double-finish the builder.
         self.session = nil
         self.builder = nil
         isRunning = false
         currentBPM = nil
         currentSampleAt = nil
-        let elapsed = startDate.map { Date().timeIntervalSince($0) } ?? 0
-        startDate = nil
-
         session.end()
-        // Only persist real rides; skip short start/stops and sessions the rider opted
-        // not to save, so they don't clutter Apple Health. Discard directly: calling
-        // endCollection first would log a spurious state-machine error.
-        guard save, elapsed >= minWorkoutDuration else {
-            builder.discardWorkout()
-            return
-        }
-        builder.endCollection(withEnd: Date()) { [weak self] _, error in
-            if let error { DispatchQueue.main.async { self?.lastError = error.localizedDescription } }
-            builder.finishWorkout { [weak self] _, error in
-                if let error { DispatchQueue.main.async { self?.lastError = error.localizedDescription } }
-            }
-        }
+        builder.discardWorkout()
     }
 }
 
@@ -124,7 +105,7 @@ extension WatchWorkoutManager: HKLiveWorkoutBuilderDelegate {
         else { return }
         let bpm = quantity.doubleValue(for: heartRateUnit)
         // The sample's own window-end, not wall-clock now, so the phone can order and
-        // de-duplicate readings carried by repeated idempotent state pushes.
+        // de-duplicate readings carried by repeated sends.
         let sampleAt = statistics.mostRecentQuantityDateInterval()?.end ?? Date()
         DispatchQueue.main.async { [weak self] in
             self?.currentBPM = bpm

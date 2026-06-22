@@ -31,7 +31,13 @@ extension PhoneConnectivity: WCSessionDelegate {
         if !context.isEmpty { receive(context) }
     }
 
-    func session(_ session: WCSession, didReceiveMessage message: [String: Any]) { receive(message) }
+    func session(
+        _ session: WCSession, didReceiveMessage message: [String: Any],
+        replyHandler: @escaping ([String: Any]) -> Void
+    ) {
+        receive(message)
+        replyHandler([:])   // ack; the watch's self-heal uses this as its delivery signal
+    }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         receive(applicationContext)

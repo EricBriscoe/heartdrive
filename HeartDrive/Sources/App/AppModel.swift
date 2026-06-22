@@ -27,7 +27,6 @@ final class AppModel {
 
     var controllerState: ErgControllerState { isControlling ? (lastUpdate?.state ?? .settling) : .idle }
     var targetPower: Int? { isControlling ? lastUpdate?.targetPower : nil }
-    var canStart: Bool { trainer.isReady }
 
     var watchLink: WatchLinkState {
         guard isControlling else { return .idle }

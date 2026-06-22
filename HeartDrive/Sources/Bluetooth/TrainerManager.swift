@@ -21,7 +21,6 @@ struct DiscoveredTrainer: Identifiable, Equatable {
 final class TrainerManager: NSObject {
     private(set) var connectionState: TrainerConnectionState = .idle
     private(set) var discovered: [DiscoveredTrainer] = []
-    private(set) var connectedName: String?
     private(set) var controlReady = false
     private(set) var controlModeName: String?
     private(set) var statusMessage: String?
@@ -30,7 +29,6 @@ final class TrainerManager: NSObject {
     private(set) var powerWatts: Int?
     private(set) var cadenceRPM: Double?
     private(set) var speedKPH: Double?
-    private(set) var lastDataAt: Date?
 
     var isReady: Bool { connectionState == .connected && controlReady }
     var isPedaling: Bool {
@@ -130,7 +128,6 @@ final class TrainerManager: NSObject {
         connected = peripheral
         peripheral.delegate = self
         connectionState = .connecting
-        connectedName = peripheral.name
         statusMessage = "Connecting…"
         central.connect(peripheral, options: nil)
     }
@@ -248,7 +245,6 @@ extension TrainerManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
         connectionState = .connected
-        connectedName = peripheral.name
         statusMessage = "Discovering services…"
         scheduleControlWatchdog()
         peripheral.discoverServices(BLEUUID.trainerServices)
@@ -325,12 +321,10 @@ extension TrainerManager: CBPeripheralDelegate {
             if let power = parsed.powerWatts { powerWatts = power }
             if let cadence = parsed.cadenceRPM { cadenceRPM = cadence }
             if let speed = parsed.speedKPH { speedKPH = speed }
-            lastDataAt = Date()
         case BLEUUID.cyclingPowerMeasurement:
             let stale = lastIndoorBikeAt.map { Date().timeIntervalSince($0) > 3 } ?? true
             if stale, let power = CyclingPowerMeasurement.instantaneousPower(data) {
                 powerWatts = power
-                lastDataAt = Date()
             }
         case BLEUUID.fitnessMachineControlPoint:
             guard let response = FTMSResponse(data) else { return }
