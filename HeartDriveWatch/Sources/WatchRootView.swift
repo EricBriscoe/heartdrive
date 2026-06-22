@@ -19,13 +19,23 @@ struct WatchRootView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            Button {
-                if model.isRunning { model.stop() } else { model.start() }
-            } label: {
-                Text(model.isRunning ? "Stop" : "Start")
-                    .frame(maxWidth: .infinity)
+            if model.isRunning {
+                HStack(spacing: 6) {
+                    Button { model.restart() } label: {
+                        Text("Restart").frame(maxWidth: .infinity).minimumScaleFactor(0.7).lineLimit(1)
+                    }
+                    .tint(.orange)
+                    Button { model.stop() } label: {
+                        Text("Stop").frame(maxWidth: .infinity).minimumScaleFactor(0.7).lineLimit(1)
+                    }
+                    .tint(.red)
+                }
+            } else {
+                Button { model.start() } label: {
+                    Text("Start").frame(maxWidth: .infinity)
+                }
+                .tint(.green)
             }
-            .tint(model.isRunning ? .red : .green)
             if let error = model.workout.lastError {
                 Text(error)
                     .font(.caption2)

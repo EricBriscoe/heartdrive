@@ -34,12 +34,15 @@ final class WatchConnectivityManager: NSObject {
             let dict = WCSession.envelope(hr)
         else { return }
         hrLog.notice("watch→phone bpm=\(Int(hr.bpm), privacy: .public) reachable=\(session.isReachable, privacy: .public)")
+        // sendMessage is the live path and is NOT subject to the updateApplicationContext
+        // rate-wedge, so it runs at the throttle's cadence. Context is sent ONLY by the
+        // 5s backstop (never per-sample), because driving updateApplicationContext faster
+        // than ~1/5s is what silently wedges the channel (rdar://21364664); this is the exact
+        // "works then stalls" failure we were hitting.
         if session.isReachable {
-            session.sendMessage(dict, replyHandler: nil) { _ in
-                try? WCSession.default.updateApplicationContext(dict)
+            session.sendMessage(dict, replyHandler: nil) { error in
+                hrLog.error("sendMessage failed: \(error.localizedDescription, privacy: .public)")
             }
-        } else {
-            try? session.updateApplicationContext(dict)
         }
     }
 
