@@ -7,6 +7,9 @@ final class PhoneConnectivity: NSObject {
     var onHeartRate: ((HeartRate) -> Void)?
 
     private var session: WCSession?
+    private var lastRecvAt = -Double.infinity
+    private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
+    private static var activations = 0
 
     func activate() {
         guard WCSession.isSupported() else { return }
@@ -14,11 +17,17 @@ final class PhoneConnectivity: NSObject {
         self.session = session
         session.delegate = self
         session.activate()
+        Self.activations += 1
+        hrLog.notice("phone WCSession activate #\(Self.activations, privacy: .public)")
     }
 
     private func receive(_ payload: [String: Any]) {
         guard let hr = WCSession.decode(HeartRate.self, from: payload) else { return }
-        hrLog.notice("phone recv bpm=\(Int(hr.bpm), privacy: .public)")
+        let t = now
+        let gap = lastRecvAt > -.infinity ? Int(t - lastRecvAt) : 0
+        lastRecvAt = t
+        hrLog.notice(
+            "phone recv bpm=\(Int(hr.bpm), privacy: .public) at=\(Int(hr.at.timeIntervalSince1970), privacy: .public) gap=\(gap, privacy: .public)s")
         DispatchQueue.main.async { [weak self] in self?.onHeartRate?(hr) }
     }
 }
@@ -41,6 +50,10 @@ extension PhoneConnectivity: WCSessionDelegate {
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
         receive(applicationContext)
+    }
+
+    func sessionReachabilityDidChange(_ session: WCSession) {
+        hrLog.notice("phone: reachable→\(session.isReachable, privacy: .public)")
     }
 
     func sessionDidBecomeInactive(_ session: WCSession) {}

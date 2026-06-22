@@ -2,7 +2,7 @@ import SwiftUI
 import UIKit
 
 struct RootView: View {
-    @State private var model = AppModel()
+    @State private var model = AppModel.shared
     @State private var showSettings = false
     @State private var showConnect = false
     @Environment(\.scenePhase) private var scenePhase

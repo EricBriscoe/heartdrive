@@ -60,6 +60,10 @@ final class WatchConnectivityManager: NSObject {
         let t = now
         push(t)
         heal(t)
+        if latest != nil, let session {
+            let ackGap = Int(t - lastDeliveredAt), recGap = Int(t - lastRecordAt), reach = session.isReachable
+            hrLog.notice("watch HB reach=\(reach, privacy: .public) ackGap=\(ackGap, privacy: .public)s recGap=\(recGap, privacy: .public)s")
+        }
     }
 
     private func push(_ t: TimeInterval) {
@@ -98,12 +102,14 @@ final class WatchConnectivityManager: NSObject {
                 lastDeliveredAt = t
                 lastReactivateAt = t
             } else if gap > reactivateAfter, t - lastReactivateAt > reactivateAfter {
+                hrLog.notice("watch: re-activate (reachable, ackGap \(Int(gap), privacy: .public)s)")
                 session.activate()
                 lastReactivateAt = t
             }
         } else if t - lastReactivateAt > reactivateAfter {
             // Unreachable: the context backstop carries HR; nudge the session to try to
             // regain the live path, but never restart on unreachability alone.
+            hrLog.notice("watch: re-activate (unreachable, ackGap \(Int(gap), privacy: .public)s)")
             session.activate()
             lastReactivateAt = t
         }
@@ -116,6 +122,11 @@ extension WatchConnectivityManager: WCSessionDelegate {
     ) {}
 
     func sessionReachabilityDidChange(_ session: WCSession) {
-        DispatchQueue.main.async { [weak self] in guard let self else { return }; self.push(self.now) }
+        let reachable = session.isReachable
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            hrLog.notice("watch: reachable→\(reachable, privacy: .public)")
+            self.push(self.now)
+        }
     }
 }

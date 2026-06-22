@@ -100,8 +100,8 @@ extension WatchLinkState {
     func label(source: String?) -> String {
         switch self {
         case .live: return source ?? "Apple Watch"
-        case .reconnecting: return "Watch live"
-        case .lost: return "Reconnecting…"
+        case .reconnecting: return "Reconnecting…"
+        case .lost: return "Watch lost"
         case .idle: return "Start on Watch"
         }
     }

@@ -33,9 +33,12 @@ final class HeartRateHub {
     var controlBPM: Double? { isFresh ? smoothedBPM : nil }
 
     func ingest(bpm: Double, sampleTime: Date, source: String) {
-        // Drop duplicates / out-of-order samples (a queued transfer can arrive
-        // after a newer live message and would otherwise corrupt the EWMA).
-        if let lastSampleTime, sampleTime <= lastSampleTime { return }
+        // Drop only an exact re-delivery of the sample we already hold; the coalescing
+        // context backstop resends the latest every few seconds. Match on `==`, not `<=`:
+        // a high-water mark let one anomalous (e.g. workout-restart) timestamp reject every
+        // later, lower reading, freezing the display and reporting a false disconnect while
+        // data still flowed. Any new sample time, even a lower one, is now accepted.
+        if let lastSampleTime, sampleTime == lastSampleTime { return }
 
         let now = Date()
         if let last = lastUpdate, let previous = smoothedBPM {

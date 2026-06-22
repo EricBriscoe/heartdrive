@@ -12,6 +12,8 @@ enum WatchLinkState {
 
 @Observable
 final class AppModel {
+    static let shared = AppModel()
+
     let trainer = TrainerManager()
     let heart = HeartRateHub()
     let connectivity = PhoneConnectivity()
@@ -35,7 +37,7 @@ final class AppModel {
         return Date().timeIntervalSince(last) < lostAfter ? .reconnecting : .lost
     }
 
-    init() {
+    private init() {
         controller = ErgController(config: AppModel.config(from: settings.snapshot))
         connectivity.onHeartRate = { [weak self] hr in self?.ingest(hr) }
         connectivity.activate()
