@@ -1,9 +1,8 @@
 import Foundation
 import Observation
 
-/// Health of the watch link, derived from heart-rate recency (the actual data
-/// flow), not WCSession reachability (which drops on wrist-down) and not generic
-/// contact (which would falsely read "live" while heart rate has stopped).
+/// Health of the watch heart-rate feed, derived from HR recency (the actual data flow)
+/// Uses HealthKit authorization state, not WCSession reachability, which drops on wrist-down.
 enum WatchLinkState {
     case idle
     case live
@@ -16,7 +15,6 @@ final class AppModel {
     let trainer = TrainerManager()
     let heart = HeartRateHub()
     let connectivity = PhoneConnectivity()
-    let workoutMirror = WorkoutMirror()
     let broadcaster = HeartRateBroadcaster()
     let settings = SettingsStore()
 
@@ -26,9 +24,6 @@ final class AppModel {
     @ObservationIgnored private let controller: ErgController
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private let lostAfter: TimeInterval = 30
-    @ObservationIgnored private var controlStartedAt: Date?
-    @ObservationIgnored private var lastRecoverKick: Date?
-    @ObservationIgnored private let recoverGrace: TimeInterval = 15
 
     var controllerState: ErgControllerState { isControlling ? (lastUpdate?.state ?? .settling) : .idle }
     var targetPower: Int? { isControlling ? lastUpdate?.targetPower : nil }
@@ -43,76 +38,37 @@ final class AppModel {
 
     init() {
         controller = ErgController(config: AppModel.config(from: settings.snapshot))
-        connectivity.onHeartRate = { [weak self] sample in self?.ingestHeartRate(sample) }
-        workoutMirror.onHeartRate = { [weak self] sample in self?.ingestHeartRate(sample) }
-        // Start is driven by the live mirror connection (onStateChange); the phone
-        // should only engage once it has heart rate. The watch's snapshot
-        // drives only Stop, so a stale persisted `.running` can't auto-restart a ride.
-        connectivity.onWorkoutState = { [weak self] state in
-            if state == .ended { self?.handleWatchWorkout(.ended) }
-        }
-        connectivity.onTargetHeartRate = { [weak self] bpm in self?.setTargetHeartRate(bpm) }
-        workoutMirror.onStateChange = { [weak self] state in self?.handleWatchWorkout(state) }
+        connectivity.onHeartRate = { [weak self] hr in self?.ingest(hr) }
         connectivity.activate()
-        workoutMirror.activate()
         if settings.broadcastToZwift { broadcaster.start() }
     }
 
-    private func ingestHeartRate(_ sample: HeartRateSample) {
-        heart.ingest(sample, source: "Apple Watch")
-        broadcaster.update(bpm: Int(sample.bpm.rounded()))
+    private func ingest(_ hr: HeartRate) {
+        heart.ingest(bpm: hr.bpm, sampleTime: hr.at, source: "Apple Watch")
+        broadcaster.update(bpm: Int(hr.bpm.rounded()))
     }
 
-    /// Keeps the phone's control state in sync with the watch's workout, driven by
-    /// start/stop on either device. Edge-triggered (guarded by `isControlling`) so
-    /// the command that caused a transition is never reflected back into a loop.
-    private func handleWatchWorkout(_ state: WorkoutState) {
-        switch state {
-        case .running where !isControlling: startControl(notifyWatch: false)
-        case .ended where isControlling: stopControl(notifyWatch: false)
-        default: break
-        }
-    }
-
-    func startControl(notifyWatch: Bool = true) {
+    func startControl() {
         guard !isControlling else { return }
         controller.config = AppModel.config(from: settings.snapshot)
         controller.start()
         isControlling = true
-        controlStartedAt = Date()
-        if notifyWatch {
-            // Wake the watch: the command starts it instantly if its app is already
-            // running; startWatchWorkout launches it from closed. Both idempotent.
-            connectivity.send(command: .startWorkout)
-            workoutMirror.startWatchWorkout()
-        }
         startTimer()
     }
 
-    func stopControl(notifyWatch: Bool = true) {
+    func stopControl() {
         guard isControlling else { return }
         controller.stop()
         isControlling = false
         timer?.invalidate()
         timer = nil
-        if notifyWatch { connectivity.send(command: .stopWorkout) }
         if trainer.isReady { trainer.setTargetPower(settings.powerFloor) }
         heart.reset()
         lastUpdate = nil
-        controlStartedAt = nil
-        lastRecoverKick = nil
     }
 
     func adjustTargetHeartRate(by delta: Int) {
         settings.targetHeartRate = min(200, max(90, settings.targetHeartRate + delta))
-        settings.save()
-    }
-
-    /// Absolute target set from the watch's Digital Crown.
-    func setTargetHeartRate(_ bpm: Int) {
-        let clamped = min(200, max(90, bpm))
-        guard clamped != settings.targetHeartRate else { return }
-        settings.targetHeartRate = clamped
         settings.save()
     }
 
@@ -159,29 +115,6 @@ final class AppModel {
             let watts = update.state == .holdingNoCadence ? settings.powerFloor : update.targetPower
             trainer.setTargetPower(watts)
         }
-        connectivity.send(
-            status: RideStatus(
-                targetHeartRate: settings.targetHeartRate, targetPowerWatts: update.targetPower,
-                saveWorkout: settings.saveWorkoutToHealth))
-        recoverMirrorIfStale()
-    }
-
-    /// The phone is the only side that knows the HR mirror has gone silent; the
-    /// watch keeps reading its own sensor regardless. After a start grace, while HR
-    /// is stale, kick the watch (throttled) to hard-rebuild the mirror over the
-    /// reliable command channel, not the coalescing application context, which
-    /// would drop the repeated, identical recovery signal.
-    private func recoverMirrorIfStale() {
-        guard !heart.isFresh, let started = controlStartedAt,
-            Date().timeIntervalSince(started) > recoverGrace
-        else {
-            lastRecoverKick = nil
-            return
-        }
-        let sinceKick = lastRecoverKick.map { Date().timeIntervalSince($0) } ?? .infinity
-        guard sinceKick > 9 else { return }
-        lastRecoverKick = Date()
-        connectivity.send(command: .recoverMirror)
     }
 
     private static func config(from settings: RideSettings) -> ErgControllerConfig {

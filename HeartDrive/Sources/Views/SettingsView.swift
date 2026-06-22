@@ -51,7 +51,7 @@ struct SettingsView: View {
                     Text("Responsiveness")
                 } footer: {
                     Text(
-                        "Gentle is the smoothest and most stable. Heart rate reacts slowly (10–30s), so even Responsive stays deliberately damped."
+                        "How fast resistance chases your heart rate. The app jumps to the predicted power on start and when you change the target, then fine-tunes, so it reaches the target far faster than before. Gentle is smoothest; Responsive is quickest but may briefly overshoot."
                     )
                 }
 

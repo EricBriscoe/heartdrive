@@ -11,11 +11,17 @@ final class HeartRateHub {
     private(set) var lastUpdate: Date?
     private(set) var source: String?
 
-    @ObservationIgnored var filterTau: Double = 12
+    // The watch already delivers ~5s-averaged HR, so a heavy EWMA here just added
+    // phase lag (~12s) that forced the controller to detune. A light filter keeps the
+    // feedback fresh; the controller's deadband + slew limit absorb the residual noise.
+    @ObservationIgnored var filterTau: Double = 5
     @ObservationIgnored var staleAfter: TimeInterval = 12
     @ObservationIgnored private var lastSampleTime: Date?
     @ObservationIgnored private var unchangedSince: Date?
-    @ObservationIgnored private let stuckTimeout: TimeInterval = 30
+    // A genuinely steady effort can hold the same averaged BPM for a while, so only
+    // treat a reading with an unchanged sample time as stale; a dead/dropped sensor is already caught by
+    // staleAfter (no new samples refreshing lastUpdate).
+    @ObservationIgnored private let stuckTimeout: TimeInterval = 90
 
     var isFresh: Bool {
         guard let lastUpdate else { return false }
@@ -25,10 +31,6 @@ final class HeartRateHub {
 
     /// The value the controller should use, or nil when stale/stuck/absent.
     var controlBPM: Double? { isFresh ? smoothedBPM : nil }
-
-    func ingest(_ sample: HeartRateSample, source: String) {
-        ingest(bpm: sample.bpm, sampleTime: sample.timestamp, source: source)
-    }
 
     func ingest(bpm: Double, sampleTime: Date, source: String) {
         // Drop duplicates / out-of-order samples (a queued transfer can arrive

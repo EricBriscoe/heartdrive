@@ -1,19 +1,10 @@
 import Foundation
-import Observation
 import WatchConnectivity
 
-/// Phone side of the watch link. Receives heart-rate samples and workout-state
-/// updates from the watch app, and sends start/stop commands plus ride status
-/// back for the watch to display.
-@Observable
+/// Phone side: receives heart rate from the watch. That is the entire watch↔phone
+/// The link is one-way, HR only. The phone never sends anything back to the watch.
 final class PhoneConnectivity: NSObject {
-    private(set) var isReachable = false
-    private(set) var watchWorkoutState: WorkoutState = .notStarted
-    private(set) var lastError: String?
-
-    @ObservationIgnored var onHeartRate: ((HeartRateSample) -> Void)?
-    @ObservationIgnored var onWorkoutState: ((WorkoutState) -> Void)?
-    @ObservationIgnored var onTargetHeartRate: ((Int) -> Void)?
+    var onHeartRate: ((HeartRate) -> Void)?
 
     private var session: WCSession?
 
@@ -25,39 +16,10 @@ final class PhoneConnectivity: NSObject {
         session.activate()
     }
 
-    func send(command: PhoneCommand) {
-        guard let message = try? WatchMessage(.command, command) else { return }
-        session?.deliver(message)
-    }
-
-    func send(status: RideStatus) {
-        guard let message = try? WatchMessage(.rideStatus, status) else { return }
-        // Application context, not sendMessage: it coalesces to the latest value,
-        // needs no reachability, and never backs up a queue, so 5s status updates
-        // can't flood the watch↔phone link that the HealthKit HR mirror rides on.
-        try? session?.updateApplicationContext(message.dictionary)
-    }
-
-    /// `driveControl` is false for the context read on activation: that value is
-    /// persisted state and may be stale, so it only refreshes the target + display
-    /// It must never drive start/stop. Live deltas drive control.
-    private func handle(_ dictionary: [String: Any], driveControl: Bool = true) {
-        guard let message = WatchMessage(dictionary: dictionary) else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            switch message.type {
-            case .heartRate:
-                if let sample = message.decode(HeartRateSample.self) { self.onHeartRate?(sample) }
-            case .watchState:
-                if let snapshot = message.decode(WatchSnapshot.self) {
-                    self.watchWorkoutState = snapshot.workoutState
-                    if let target = snapshot.target { self.onTargetHeartRate?(target) }
-                    if driveControl { self.onWorkoutState?(snapshot.workoutState) }
-                }
-            case .command, .rideStatus:
-                break
-            }
-        }
+    private func receive(_ payload: [String: Any]) {
+        guard let hr = WCSession.decode(HeartRate.self, from: payload) else { return }
+        hrLog.notice("phone recv bpm=\(Int(hr.bpm), privacy: .public)")
+        DispatchQueue.main.async { [weak self] in self?.onHeartRate?(hr) }
     }
 }
 
@@ -66,27 +28,13 @@ extension PhoneConnectivity: WCSessionDelegate {
         _ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?
     ) {
         let context = session.receivedApplicationContext
-        if !context.isEmpty { handle(context, driveControl: false) }
-        DispatchQueue.main.async { [weak self] in
-            self?.isReachable = session.isReachable
-            if let error { self?.lastError = error.localizedDescription }
-        }
+        if !context.isEmpty { receive(context) }
     }
 
-    func sessionReachabilityDidChange(_ session: WCSession) {
-        DispatchQueue.main.async { [weak self] in self?.isReachable = session.isReachable }
-    }
-
-    func session(_ session: WCSession, didReceiveMessage message: [String: Any]) {
-        handle(message)
-    }
-
-    func session(_ session: WCSession, didReceiveUserInfo userInfo: [String: Any]) {
-        handle(userInfo)
-    }
+    func session(_ session: WCSession, didReceiveMessage message: [String: Any]) { receive(message) }
 
     func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
-        handle(applicationContext)
+        receive(applicationContext)
     }
 
     func sessionDidBecomeInactive(_ session: WCSession) {}

@@ -1,42 +1,31 @@
 import Foundation
 import Observation
 
+/// The watch is a heart-rate sensor with a Start/Stop button. It runs the workout
+/// (which captures HR + keeps the app alive screen-off) and streams HR one-way to the
+/// phone. It holds no target, receives nothing, and does no control; all of that lives
+/// on the phone.
 @Observable
 final class WatchModel {
     static let shared = WatchModel()
 
     let workout = WatchWorkoutManager()
-    let connectivity = WatchConnectivityManager()
+    @ObservationIgnored let connectivity = WatchConnectivityManager()
 
     var isRunning: Bool { workout.isRunning }
+    var currentBPM: Double? { workout.currentBPM }
 
     private init() {
-        workout.onHeartRate = { [weak self] sample in
-            self?.connectivity.sendHeartRate(sample)
-        }
-        workout.onStateChange = { [weak self] state in
-            self?.connectivity.updateWorkoutState(state)
-        }
-        connectivity.onCommand = { [weak self] command in
-            switch command {
-            case .startWorkout: self?.workout.ensureActive()
-            case .stopWorkout: self?.stop()
-            case .recoverMirror: self?.workout.hardRemirror()  // phone isn't getting HR; rebuild the mirror
-            }
-        }
-        // When the phone reconnects (e.g. after a restart), just re-announce that a
-        // workout is running. Re-mirroring is left to the phone's recovery kick when
-        // it isn't receiving HR, so a healthy mirror isn't torn down on
-        // every wrist-raise (which flaps reachability).
-        connectivity.onReachable = { [weak self] in
-            guard let self, self.workout.isRunning else { return }
-            self.connectivity.updateWorkoutState(.running)
-        }
+        workout.onHeartRate = { [weak self] in self?.sendHeartRate() }
         connectivity.activate()
         workout.requestAuthorization()
     }
 
+    private func sendHeartRate() {
+        guard let bpm = workout.currentBPM, let at = workout.currentSampleAt else { return }
+        connectivity.send(HeartRate(bpm: bpm, at: at, sentAt: Date()))
+    }
+
     func start() { workout.start() }
-    func stop() { workout.end(save: connectivity.saveWorkoutPreference) }
-    func setTargetHeartRate(_ bpm: Int) { connectivity.updateTarget(bpm) }
+    func stop() { workout.end(save: false) }
 }
