@@ -25,6 +25,7 @@ final class AppModel {
 
     @ObservationIgnored private let controller: ErgController
     @ObservationIgnored private var timer: Timer?
+    @ObservationIgnored private var lastTickAt: Date?
     @ObservationIgnored private let lostAfter: TimeInterval = 30
 
     var controllerState: ErgControllerState { isControlling ? (lastUpdate?.state ?? .settling) : .idle }
@@ -63,6 +64,7 @@ final class AppModel {
         isControlling = false
         timer?.invalidate()
         timer = nil
+        lastTickAt = nil
         if trainer.isReady { trainer.setTargetPower(settings.powerFloor) }
         heart.reset()
         lastUpdate = nil
@@ -91,6 +93,7 @@ final class AppModel {
 
     private func startTimer() {
         timer?.invalidate()
+        lastTickAt = nil
         let timer = Timer(timeInterval: controller.config.updateInterval, repeats: true) { [weak self] _ in
             self?.tick()
         }
@@ -106,15 +109,21 @@ final class AppModel {
             controller.markTargetChanged()
         }
 
+        // Drive the controller on the *actual* elapsed time, clamped so a late or
+        // coalesced tick can't integrate or slew an outsized step at once.
+        let now = Date()
+        let nominal = controller.config.updateInterval
+        let dt = lastTickAt.map { min(max(now.timeIntervalSince($0), 0.5), nominal * 2) } ?? nominal
+        lastTickAt = now
+
         let update = controller.update(
             filteredHR: heart.controlBPM,
             isPedaling: trainer.isPedaling,
-            dt: controller.config.updateInterval)
+            dt: dt)
         lastUpdate = update
 
         if trainer.isReady {
-            let watts = update.state == .holdingNoCadence ? settings.powerFloor : update.targetPower
-            trainer.setTargetPower(watts)
+            trainer.setTargetPower(update.targetPower)
         }
     }
 
