@@ -2,13 +2,17 @@ import SwiftUI
 
 struct WatchRootView: View {
     @State private var model = WatchModel.shared
+    @State private var targetHR: Double = 140
+    @State private var crownWork: DispatchWorkItem?
+    @FocusState private var crownFocused: Bool
 
     var body: some View {
-        VStack(spacing: 12) {
+        VStack(spacing: 8) {
             Spacer(minLength: 0)
+            targetRow
             VStack(spacing: 0) {
                 Text(Display.int(model.currentBPM))
-                    .font(.system(size: 76, weight: .bold, design: .rounded))
+                    .font(.system(size: 64, weight: .bold, design: .rounded))
                     .foregroundStyle(.pink)
                     .monospacedDigit()
                     .contentTransition(.numericText())
@@ -19,23 +23,7 @@ struct WatchRootView: View {
                     .foregroundStyle(.secondary)
             }
             Spacer(minLength: 0)
-            if model.isRunning {
-                HStack(spacing: 6) {
-                    Button { model.restart() } label: {
-                        Text("Restart").frame(maxWidth: .infinity).minimumScaleFactor(0.7).lineLimit(1)
-                    }
-                    .tint(.orange)
-                    Button { model.stop() } label: {
-                        Text("Stop").frame(maxWidth: .infinity).minimumScaleFactor(0.7).lineLimit(1)
-                    }
-                    .tint(.red)
-                }
-            } else {
-                Button { model.start() } label: {
-                    Text("Start").frame(maxWidth: .infinity)
-                }
-                .tint(.green)
-            }
+            controls
             if let error = model.workout.lastError {
                 Text(error)
                     .font(.caption2)
@@ -46,5 +34,60 @@ struct WatchRootView: View {
         }
         .padding(.horizontal, 4)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        // The Digital Crown sets the target heart rate. `.focusable` must precede
+        // `.digitalCrownRotation`, and there's no ScrollView competing for the crown.
+        .focusable(true)
+        .focused($crownFocused)
+        .digitalCrownRotation($targetHR, from: 90, through: 200, by: 1, sensitivity: .low, isContinuous: false)
+        .onChange(of: targetHR) { _, new in
+            // Debounce a settled gesture into one synced edit. setTarget no-ops if the value
+            // already matches the register, so a phone-synced value reflected back here (which
+            // moves targetHR and re-triggers this) can't echo to the phone.
+            let bpm = Int(new.rounded())
+            crownWork?.cancel()
+            let work = DispatchWorkItem { model.setTarget(bpm) }
+            crownWork = work
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
+        }
+        .onChange(of: model.target) { _, synced in
+            if let synced, Int(targetHR.rounded()) != synced { targetHR = Double(synced) }
+        }
+        .onAppear {
+            crownFocused = true
+            if let t = model.target { targetHR = Double(t) }
+        }
+    }
+
+    private var targetRow: some View {
+        VStack(spacing: 0) {
+            Text("\(Int(targetHR.rounded()))")
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .foregroundStyle(Color.heartRateZone(bpm: model.currentBPM, target: Int(targetHR.rounded())))
+            Text("TARGET")
+                .font(.system(size: 9, weight: .semibold))
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder private var controls: some View {
+        if model.isRunning {
+            HStack(spacing: 6) {
+                Button { model.restart() } label: {
+                    Text("Restart").frame(maxWidth: .infinity).minimumScaleFactor(0.7).lineLimit(1)
+                }
+                .tint(.orange)
+                Button { model.stop() } label: {
+                    Text("Stop").frame(maxWidth: .infinity).minimumScaleFactor(0.7).lineLimit(1)
+                }
+                .tint(.red)
+            }
+        } else {
+            Button { model.start() } label: {
+                Text("Start").frame(maxWidth: .infinity)
+            }
+            .tint(.green)
+        }
     }
 }

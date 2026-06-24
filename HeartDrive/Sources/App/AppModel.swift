@@ -41,6 +41,8 @@ final class AppModel {
     private init() {
         controller = ErgController(config: AppModel.config(from: settings.snapshot))
         connectivity.onHeartRate = { [weak self] hr in self?.ingest(hr) }
+        connectivity.onTargetChanged = { [weak self] bpm in self?.applyRemoteTarget(bpm) }
+        connectivity.seedTarget(settings.targetHeartRate)
         connectivity.activate()
         if settings.broadcastToZwift { broadcaster.start() }
     }
@@ -72,6 +74,25 @@ final class AppModel {
 
     func adjustTargetHeartRate(by delta: Int) {
         settings.targetHeartRate = min(200, max(90, settings.targetHeartRate + delta))
+        settings.save()
+    }
+
+    /// Reconcile after any phone-side change to `settings.targetHeartRate` (see RootView). If
+    /// the new value differs from the synced register it's a local edit → push it to the watch;
+    /// a value that merely mirrors an already-synced one (a remote apply) leaves them equal and
+    /// no-ops, so there's no echo and no need for an "applying remote" flag.
+    func reconcileTargetEdit() {
+        if connectivity.sync.register?.value != settings.targetHeartRate {
+            connectivity.sendLocalTarget(settings.targetHeartRate)
+        }
+    }
+
+    /// Apply a target synced from the watch. Mirrors it into settings (the running loop picks
+    /// it up on its next tick); never sends because received updates don't echo.
+    private func applyRemoteTarget(_ bpm: Int) {
+        let v = min(200, max(90, bpm))
+        guard settings.targetHeartRate != v else { return }
+        settings.targetHeartRate = v
         settings.save()
     }
 

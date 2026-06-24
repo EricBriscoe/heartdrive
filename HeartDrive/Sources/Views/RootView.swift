@@ -45,5 +45,6 @@ struct RootView: View {
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { UIApplication.shared.isIdleTimerDisabled = keepAwake }
         }
+        .onChange(of: model.settings.targetHeartRate) { _, _ in model.reconcileTargetEdit() }
     }
 }

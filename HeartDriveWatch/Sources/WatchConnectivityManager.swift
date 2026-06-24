@@ -15,6 +15,11 @@ import WatchConnectivity
 ///    what the manual Restart button does.
 final class WatchConnectivityManager: NSObject {
     var onRequestRestart: (() -> Void)?
+    /// Called on the main queue when an accepted target-register update arrives from the phone.
+    var onTargetChanged: ((Int) -> Void)?
+
+    /// Two-way last-write-wins sync of the target heart rate (the watch authors via the Crown).
+    let sync = TargetSync(me: .watch)
 
     private var session: WCSession?
     private var latest: HeartRate?
@@ -48,12 +53,50 @@ final class WatchConnectivityManager: NSObject {
 
     /// Call on every new HR sample.
     func record(_ hr: HeartRate) {
-        if let latest, hr.at <= latest.at { return }   // drop out-of-order / duplicate
+        // Drop only an exact re-delivery of the sample we already hold (the workout builder
+        // can re-emit the same statistic). Match on `==`, not a `<=` high-water mark: that
+        // could latch on one anomalous timestamp and permanently reject the stream. This is the bug
+        // that froze the phone hub. A restart clears this via `resetStream()`.
+        if let latest, hr.at == latest.at { return }
         let t = now
         if latest == nil { lastDeliveredAt = t; lastReactivateAt = t }
         latest = hr
         lastRecordAt = t
         push(t)
+    }
+
+    /// Forget the current sample and delivery/heal state so a freshly-restarted (or stopped)
+    /// workout's HR stream is treated as a clean start: no stale high-water mark to reject it,
+    /// and no inherited delivery gap that would make `heal()` immediately re-fire.
+    func resetStream() {
+        latest = nil
+        lastDeliveredAt = -.infinity
+        lastRecordAt = -.infinity
+        lastReactivateAt = -.infinity
+    }
+
+    /// A local target edit (Digital Crown). Bumps the register and pushes it promptly, with an
+    /// immediate sendMessage nudge when reachable, plus the rate-limited context backstop. A
+    /// no-op if unchanged, which is what stops a phone-synced value from echoing back.
+    func setLocalTarget(_ bpm: Int) {
+        guard sync.setLocal(bpm) else { return }
+        sendTargetNudge()
+        push(now)
+    }
+
+    private func sendTargetNudge() {
+        guard let session, session.activationState == .activated, session.isReachable,
+            let reg = sync.register, let d = WCSession.encode(reg)
+        else { return }
+        session.sendMessage([WCKey.target: d], replyHandler: { _ in }, errorHandler: { _ in })
+    }
+
+    private func handleIncoming(_ payload: [String: Any]) {
+        guard let reg = WCSession.decode(Register<Int>.self, from: payload[WCKey.target]) else { return }
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let applied = self.sync.receive(reg) else { return }
+            self.onTargetChanged?(applied)
+        }
     }
 
     private func tick() {
@@ -62,26 +105,37 @@ final class WatchConnectivityManager: NSObject {
         heal(t)
         if latest != nil, let session {
             let ackGap = Int(t - lastDeliveredAt), recGap = Int(t - lastRecordAt), reach = session.isReachable
-            hrLog.notice("watch HB reach=\(reach, privacy: .public) ackGap=\(ackGap, privacy: .public)s recGap=\(recGap, privacy: .public)s")
+            hrLog.debug("watch HB reach=\(reach, privacy: .public) ackGap=\(ackGap, privacy: .public)s recGap=\(recGap, privacy: .public)s")
         }
     }
 
     private func push(_ t: TimeInterval) {
-        guard let session, session.activationState == .activated, let hr = latest,
-            let dict = WCSession.envelope(hr)
-        else { return }
-        if session.isReachable, t - lastLiveSendAt >= liveInterval {
+        guard let session, session.activationState == .activated else { return }
+
+        // The context backstop carries everything this device owns: HR and the target
+        // register in one coalesced, rate-limited dictionary. A second context writer would
+        // risk the over-1/5s wedge (rdar://21364664), so there is exactly one.
+        var context: [String: Any] = [:]
+        if let hr = latest, let d = WCSession.encode(hr) { context[WCKey.heartRate] = d }
+        if let reg = sync.register, let d = WCSession.encode(reg) { context[WCKey.target] = d }
+        guard !context.isEmpty else { return }
+
+        // Live HR nudge over sendMessage when reachable; the phone's reply is the delivery
+        // signal. Throttled; the context backstop covers anything it misses.
+        if let hr = latest, session.isReachable, t - lastLiveSendAt >= liveInterval,
+            let d = WCSession.encode(hr) {
             lastLiveSendAt = t
-            session.sendMessage(dict, replyHandler: { [weak self] _ in
+            session.sendMessage([WCKey.heartRate: d], replyHandler: { [weak self] _ in
                 guard let self else { return }
                 DispatchQueue.main.async { self.lastDeliveredAt = self.now }
             }, errorHandler: { error in
                 hrLog.error("watch: sendMessage failed: \(error.localizedDescription, privacy: .public)")
             })
         }
+
         if t - lastContextAt >= contextInterval {
             lastContextAt = t
-            try? session.updateApplicationContext(dict)
+            try? session.updateApplicationContext(context)
         }
     }
 
@@ -119,7 +173,22 @@ final class WatchConnectivityManager: NSObject {
 extension WatchConnectivityManager: WCSessionDelegate {
     func session(
         _ session: WCSession, activationDidCompleteWith activationState: WCSessionActivationState, error: Error?
-    ) {}
+    ) {
+        let context = session.receivedApplicationContext
+        if !context.isEmpty { handleIncoming(context) }
+    }
+
+    func session(
+        _ session: WCSession, didReceiveMessage message: [String: Any],
+        replyHandler: @escaping ([String: Any]) -> Void
+    ) {
+        handleIncoming(message)
+        replyHandler([:])
+    }
+
+    func session(_ session: WCSession, didReceiveApplicationContext applicationContext: [String: Any]) {
+        handleIncoming(applicationContext)
+    }
 
     func sessionReachabilityDidChange(_ session: WCSession) {
         let reachable = session.isReachable

@@ -1,10 +1,10 @@
 import Foundation
 import Observation
 
-/// The watch is a heart-rate sensor with a Start/Stop button. It runs the workout
-/// (which captures HR + keeps the app alive screen-off) and streams HR one-way to the
-/// phone. It holds no target, receives nothing, and does no control; all of that lives
-/// on the phone.
+/// The watch is a heart-rate sensor with a Start/Stop button and a Digital Crown that sets the
+/// target heart rate. It runs the workout (which captures HR + keeps the app alive screen-off),
+/// streams HR one-way to the phone, and two-way-syncs just the target (last-write-wins). All
+/// control still lives on the phone.
 @Observable
 final class WatchModel {
     static let shared = WatchModel()
@@ -14,10 +14,14 @@ final class WatchModel {
 
     var isRunning: Bool { workout.isRunning }
     var currentBPM: Double? { workout.currentBPM }
+    /// Latest known target heart rate, set by the Crown or synced from the phone. nil until
+    /// the first value is known (the phone seeds it shortly after launch).
+    var target: Int?
 
     private init() {
         workout.onHeartRate = { [weak self] in self?.sendHeartRate() }
         connectivity.onRequestRestart = { [weak self] in self?.restart() }
+        connectivity.onTargetChanged = { [weak self] bpm in self?.target = bpm }
         connectivity.activate()
         workout.requestAuthorization()
     }
@@ -27,14 +31,25 @@ final class WatchModel {
         connectivity.record(HeartRate(bpm: bpm, at: at))
     }
 
-    func start() { workout.start() }
-    func stop() { workout.end() }
+    /// A Digital Crown adjustment. No-ops in the sync layer if the value is unchanged, so
+    /// reflecting a phone-synced value back through the Crown can't echo to the phone.
+    func setTarget(_ bpm: Int) {
+        connectivity.setLocalTarget(bpm)
+        target = bpm
+    }
 
-    /// Restart heart-rate monitoring: tear the workout down (and with it the HR
-    /// stream) and start a clean one. This is the local recovery path when the feed
-    /// stalls; it doesn't depend on the phone, which has no channel back to the watch.
+    func start() { workout.start() }
+    func stop() {
+        workout.end()
+        connectivity.resetStream()
+    }
+
+    /// Restart heart-rate monitoring: tear the workout down (and with it the HR stream)
+    /// and start a clean one. This is the local recovery path when the feed stalls; it
+    /// doesn't depend on the phone, which has no channel back to the watch.
     func restart() {
         workout.end()
+        connectivity.resetStream()
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in self?.workout.start() }
     }
 }
