@@ -20,23 +20,14 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    Stepper(value: $settings.powerFloor, in: 30...300, step: 5) {
-                        LabeledContent("Floor", value: "\(settings.powerFloor) W")
-                    }
-                    Stepper(value: $settings.powerCeiling, in: settings.powerFloor...600, step: 5) {
-                        LabeledContent("Ceiling", value: "\(settings.powerCeiling) W")
-                    }
-                    Stepper(
-                        value: $settings.startingPower,
-                        in: settings.powerFloor...max(settings.powerFloor, settings.powerCeiling), step: 5
-                    ) {
-                        LabeledContent("Start at", value: "\(settings.startingPower) W")
+                    Stepper(value: $settings.ftp, in: 50...500, step: 5) {
+                        LabeledContent("FTP", value: "\(settings.ftp) W")
                     }
                 } header: {
-                    Text("Power limits")
+                    Text("FTP")
                 } footer: {
                     Text(
-                        "The ceiling is your main safety limit; the loop will never demand more than this, even if your heart rate stays below target."
+                        "Your functional threshold power. The resistance floor (\(settings.powerFloor) W), starting power (\(settings.startingPower) W), and safety ceiling (\(settings.powerCeiling) W) are all set from it; the loop never demands more than the ceiling, even if your heart rate stays below target."
                     )
                 }
 
@@ -51,7 +42,7 @@ struct SettingsView: View {
                     Text("Responsiveness")
                 } footer: {
                     Text(
-                        "How fast resistance chases your heart rate. The app jumps to the predicted power on start and when you change the target, then fine-tunes, so it reaches the target far faster than before. Gentle is smoothest; Responsive is quickest but may briefly overshoot."
+                        "How fast resistance chases your heart rate. The app jumps to the predicted power on start and when you change the target, then fine-tunes. Gentle is smoothest; Responsive is quickest but may briefly overshoot."
                     )
                 }
 

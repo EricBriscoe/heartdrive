@@ -3,13 +3,22 @@ import Observation
 
 struct RideSettings: Codable, Equatable {
     var targetHeartRate: Int = 140
-    var powerFloor: Int = 60
-    var powerCeiling: Int = 200
-    var startingPower: Int = 110
+    var ftp: Int = 200
     var aggressiveness: ControlAggressiveness = .balanced
     var broadcastToZwift: Bool = false
     var cadenceTarget: Int = 90
     var showCadenceGuide: Bool = false
+
+    // The whole resistance band is derived from one number (FTP) instead of three separate
+    // settings: a 30% floor, a 300% safety ceiling, and a 50% starting power.
+    static let floorFraction = 0.30
+    static let ceilingFraction = 3.00
+    static let startFraction = 0.50
+    static func watts(_ ftp: Int, _ fraction: Double) -> Int { Int((Double(ftp) * fraction).rounded()) }
+
+    var powerFloor: Int { Self.watts(ftp, Self.floorFraction) }
+    var powerCeiling: Int { Self.watts(ftp, Self.ceilingFraction) }
+    var startingPower: Int { Self.watts(ftp, Self.startFraction) }
 }
 
 extension RideSettings {
@@ -18,9 +27,7 @@ extension RideSettings {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = RideSettings()
         targetHeartRate = try container.decodeIfPresent(Int.self, forKey: .targetHeartRate) ?? defaults.targetHeartRate
-        powerFloor = try container.decodeIfPresent(Int.self, forKey: .powerFloor) ?? defaults.powerFloor
-        powerCeiling = try container.decodeIfPresent(Int.self, forKey: .powerCeiling) ?? defaults.powerCeiling
-        startingPower = try container.decodeIfPresent(Int.self, forKey: .startingPower) ?? defaults.startingPower
+        ftp = try container.decodeIfPresent(Int.self, forKey: .ftp) ?? defaults.ftp
         aggressiveness =
             try container.decodeIfPresent(ControlAggressiveness.self, forKey: .aggressiveness)
             ?? defaults.aggressiveness
@@ -35,9 +42,7 @@ extension RideSettings {
 @Observable
 final class SettingsStore {
     var targetHeartRate: Int
-    var powerFloor: Int
-    var powerCeiling: Int
-    var startingPower: Int
+    var ftp: Int
     var aggressiveness: ControlAggressiveness
     var broadcastToZwift: Bool
     var cadenceTarget: Int
@@ -45,12 +50,14 @@ final class SettingsStore {
 
     @ObservationIgnored private static let storageKey = "rideSettings"
 
+    var powerFloor: Int { RideSettings.watts(ftp, RideSettings.floorFraction) }
+    var powerCeiling: Int { RideSettings.watts(ftp, RideSettings.ceilingFraction) }
+    var startingPower: Int { RideSettings.watts(ftp, RideSettings.startFraction) }
+
     init() {
         let loaded = SettingsStore.loadSnapshot() ?? RideSettings()
         targetHeartRate = loaded.targetHeartRate
-        powerFloor = loaded.powerFloor
-        powerCeiling = loaded.powerCeiling
-        startingPower = loaded.startingPower
+        ftp = loaded.ftp
         aggressiveness = loaded.aggressiveness
         broadcastToZwift = loaded.broadcastToZwift
         cadenceTarget = loaded.cadenceTarget
@@ -60,9 +67,7 @@ final class SettingsStore {
     var snapshot: RideSettings {
         RideSettings(
             targetHeartRate: targetHeartRate,
-            powerFloor: powerFloor,
-            powerCeiling: powerCeiling,
-            startingPower: startingPower,
+            ftp: ftp,
             aggressiveness: aggressiveness,
             broadcastToZwift: broadcastToZwift,
             cadenceTarget: cadenceTarget,
