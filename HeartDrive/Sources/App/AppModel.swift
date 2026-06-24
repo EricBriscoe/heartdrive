@@ -1,4 +1,5 @@
 import Foundation
+import HealthKit
 import Observation
 
 /// Health of the watch heart-rate feed, derived from HR recency (the actual data flow)
@@ -27,6 +28,7 @@ final class AppModel {
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var lastTickAt: Date?
     @ObservationIgnored private let lostAfter: TimeInterval = 30
+    @ObservationIgnored private let healthStore = HKHealthStore()
 
     var controllerState: ErgControllerState { isControlling ? (lastUpdate?.state ?? .settling) : .idle }
     var targetPower: Int? { isControlling ? lastUpdate?.targetPower : nil }
@@ -42,8 +44,10 @@ final class AppModel {
         controller = ErgController(config: AppModel.config(from: settings.snapshot))
         connectivity.onHeartRate = { [weak self] hr in self?.ingest(hr) }
         connectivity.onTargetChanged = { [weak self] bpm in self?.applyRemoteTarget(bpm) }
+        connectivity.onActiveChanged = { [weak self] active in self?.applyRemoteActive(active) }
         connectivity.seedTarget(settings.targetHeartRate)
         connectivity.activate()
+        requestWatchLaunchAuthorization()
         if settings.broadcastToZwift { broadcaster.start() }
     }
 
@@ -52,7 +56,23 @@ final class AppModel {
         broadcaster.update(bpm: Int(hr.bpm.rounded()))
     }
 
+    /// User tapped Start on the phone: begin control, wake the watch to start its workout, and
+    /// sync the active intent so the two stay in lockstep.
     func startControl() {
+        guard !isControlling else { return }
+        beginControl()
+        connectivity.sendLocalActive(true)
+        launchWatchWorkout()
+    }
+
+    /// User tapped Stop on the phone.
+    func stopControl() {
+        guard isControlling else { return }
+        endControl()
+        connectivity.sendLocalActive(false)
+    }
+
+    private func beginControl() {
         guard !isControlling else { return }
         controller.config = AppModel.config(from: settings.snapshot)
         controller.start()
@@ -60,7 +80,7 @@ final class AppModel {
         startTimer()
     }
 
-    func stopControl() {
+    private func endControl() {
         guard isControlling else { return }
         controller.stop()
         isControlling = false
@@ -70,6 +90,16 @@ final class AppModel {
         if trainer.isReady { trainer.setTargetPower(settings.powerFloor) }
         heart.reset()
         lastUpdate = nil
+    }
+
+    /// Apply a Start/Stop intent synced from the watch (e.g. the rider hit Start on their
+    /// wrist). Auto-starts trainer control when the trainer is ready; never re-syncs.
+    private func applyRemoteActive(_ active: Bool) {
+        if active {
+            if trainer.isReady { beginControl() }
+        } else {
+            endControl()
+        }
     }
 
     func adjustTargetHeartRate(by delta: Int) {
@@ -82,7 +112,7 @@ final class AppModel {
     /// a value that merely mirrors an already-synced one (a remote apply) leaves them equal and
     /// no-ops, so there's no echo and no need for an "applying remote" flag.
     func reconcileTargetEdit() {
-        if connectivity.sync.register?.value != settings.targetHeartRate {
+        if connectivity.target.register?.value != settings.targetHeartRate {
             connectivity.sendLocalTarget(settings.targetHeartRate)
         }
     }
@@ -94,6 +124,30 @@ final class AppModel {
         guard settings.targetHeartRate != v else { return }
         settings.targetHeartRate = v
         settings.save()
+    }
+
+    /// Ask once for permission to share workouts, which `startWatchApp` requires.
+    private func requestWatchLaunchAuthorization() {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        healthStore.requestAuthorization(toShare: [HKObjectType.workoutType()], read: []) { _, error in
+            if let error {
+                hrLog.error("phone: HealthKit auth failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+    }
+
+    /// Launch or wake the watch app to start its workout. This is the only way to start the watch app
+    /// from the phone. Best-effort: slow or unavailable if the watch is asleep or absent.
+    private func launchWatchWorkout() {
+        guard HKHealthStore.isHealthDataAvailable() else { return }
+        let config = HKWorkoutConfiguration()
+        config.activityType = .cycling
+        config.locationType = .indoor
+        healthStore.startWatchApp(with: config) { _, error in
+            if let error {
+                hrLog.error("phone: startWatchApp failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
     }
 
     func setBroadcasting(_ on: Bool) {

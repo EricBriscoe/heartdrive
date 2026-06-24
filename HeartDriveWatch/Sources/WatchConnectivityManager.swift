@@ -15,11 +15,14 @@ import WatchConnectivity
 ///    what the manual Restart button does.
 final class WatchConnectivityManager: NSObject {
     var onRequestRestart: (() -> Void)?
-    /// Called on the main queue when an accepted target-register update arrives from the phone.
+    /// Called on the main queue when an accepted register update arrives from the phone.
     var onTargetChanged: ((Int) -> Void)?
+    var onActiveChanged: ((Bool) -> Void)?
 
-    /// Two-way last-write-wins sync of the target heart rate (the watch authors via the Crown).
-    let sync = TargetSync(me: .watch)
+    /// Two-way last-write-wins sync. The watch authors the target via the Crown and the
+    /// session-active intent via Start/Stop.
+    let target = SyncedValue<Int>(me: .watch)
+    let active = SyncedValue<Bool>(me: .watch)
 
     private var session: WCSession?
     private var latest: HeartRate?
@@ -79,23 +82,41 @@ final class WatchConnectivityManager: NSObject {
     /// immediate sendMessage nudge when reachable, plus the rate-limited context backstop. A
     /// no-op if unchanged, which is what stops a phone-synced value from echoing back.
     func setLocalTarget(_ bpm: Int) {
-        guard sync.setLocal(bpm) else { return }
-        sendTargetNudge()
+        guard target.setLocal(bpm) else { return }
+        sendNudge()
         push(now)
     }
 
-    private func sendTargetNudge() {
-        guard let session, session.activationState == .activated, session.isReachable,
-            let reg = sync.register, let d = WCSession.encode(reg)
-        else { return }
-        session.sendMessage([WCKey.target: d], replyHandler: { _ in }, errorHandler: { _ in })
+    /// A local Start/Stop on the watch. Bumps the session-active intent and pushes it.
+    func setLocalActive(_ on: Bool) {
+        guard active.setLocal(on) else { return }
+        sendNudge()
+        push(now)
+    }
+
+    /// Immediate best-effort nudge of the current registers over sendMessage when reachable;
+    /// the rate-limited context backstop carries anything this misses.
+    private func sendNudge() {
+        guard let session, session.activationState == .activated, session.isReachable else { return }
+        var dict: [String: Any] = [:]
+        if let reg = target.register, let d = WCSession.encode(reg) { dict[WCKey.target] = d }
+        if let reg = active.register, let d = WCSession.encode(reg) { dict[WCKey.active] = d }
+        guard !dict.isEmpty else { return }
+        session.sendMessage(dict, replyHandler: { _ in }, errorHandler: { _ in })
     }
 
     private func handleIncoming(_ payload: [String: Any]) {
-        guard let reg = WCSession.decode(Register<Int>.self, from: payload[WCKey.target]) else { return }
-        DispatchQueue.main.async { [weak self] in
-            guard let self, let applied = self.sync.receive(reg) else { return }
-            self.onTargetChanged?(applied)
+        if let reg = WCSession.decode(Register<Int>.self, from: payload[WCKey.target]) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let applied = self.target.receive(reg) else { return }
+                self.onTargetChanged?(applied)
+            }
+        }
+        if let reg = WCSession.decode(Register<Bool>.self, from: payload[WCKey.active]) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, let applied = self.active.receive(reg) else { return }
+                self.onActiveChanged?(applied)
+            }
         }
     }
 
@@ -117,7 +138,8 @@ final class WatchConnectivityManager: NSObject {
         // risk the over-1/5s wedge (rdar://21364664), so there is exactly one.
         var context: [String: Any] = [:]
         if let hr = latest, let d = WCSession.encode(hr) { context[WCKey.heartRate] = d }
-        if let reg = sync.register, let d = WCSession.encode(reg) { context[WCKey.target] = d }
+        if let reg = target.register, let d = WCSession.encode(reg) { context[WCKey.target] = d }
+        if let reg = active.register, let d = WCSession.encode(reg) { context[WCKey.active] = d }
         guard !context.isEmpty else { return }
 
         // Live HR nudge over sendMessage when reachable; the phone's reply is the delivery

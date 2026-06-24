@@ -43,8 +43,8 @@ struct Register<Value: Codable & Equatable>: Codable, Equatable {
 /// received registers are merged and applied but never bumped or re-sent; that asymmetry is
 /// what structurally prevents echo loops (no timers, no "applying remote" flags). Not
 /// thread-safe by design: each owner confines all access to the main queue.
-final class TargetSync {
-    private(set) var register: Register<Int>?
+final class SyncedValue<Value: Codable & Equatable> {
+    private(set) var register: Register<Value>?
     private let me: SyncDevice
     private var lastSeenPeerVersion: UInt64 = 0
 
@@ -52,12 +52,12 @@ final class TargetSync {
 
     /// Adopt an initial value without sending (e.g. the phone seeding from persisted settings
     /// at launch). Seeded weak (version 0) so any genuine edit on either device supersedes it.
-    func seed(_ value: Int) {
+    func seed(_ value: Value) {
         if register == nil { register = Register(value: value, version: 0, origin: me) }
     }
 
     /// A local edit. Returns true iff the value changed (caller then sends).
-    func setLocal(_ value: Int) -> Bool {
+    func setLocal(_ value: Value) -> Bool {
         if register?.value == value { return false }
         let next = max(register?.version ?? 0, lastSeenPeerVersion) + 1
         register = Register(value: value, version: next, origin: me)
@@ -66,7 +66,7 @@ final class TargetSync {
 
     /// A register arrived from the peer. Returns the new value iff local state changed (caller
     /// applies it but must not send because received updates don't echo).
-    func receive(_ incoming: Register<Int>) -> Int? {
+    func receive(_ incoming: Register<Value>) -> Value? {
         lastSeenPeerVersion = max(lastSeenPeerVersion, incoming.version)
         if register == nil {
             register = incoming
@@ -82,6 +82,7 @@ final class TargetSync {
 enum WCKey {
     static let heartRate = "hr"
     static let target = "cfg"
+    static let active = "run"
 }
 
 extension WCSession {

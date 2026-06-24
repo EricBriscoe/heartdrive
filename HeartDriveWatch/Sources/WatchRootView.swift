@@ -73,16 +73,10 @@ struct WatchRootView: View {
 
     @ViewBuilder private var controls: some View {
         if model.isRunning {
-            HStack(spacing: 6) {
-                Button { model.restart() } label: {
-                    Text("Restart").frame(maxWidth: .infinity).minimumScaleFactor(0.7).lineLimit(1)
-                }
-                .tint(.orange)
-                Button { model.stop() } label: {
-                    Text("Stop").frame(maxWidth: .infinity).minimumScaleFactor(0.7).lineLimit(1)
-                }
-                .tint(.red)
+            Button { model.stop() } label: {
+                Text("Stop").frame(maxWidth: .infinity)
             }
+            .tint(.red)
         } else {
             Button { model.start() } label: {
                 Text("Start").frame(maxWidth: .infinity)
