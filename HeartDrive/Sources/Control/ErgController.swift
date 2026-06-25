@@ -390,15 +390,23 @@ final class ErgController {
     /// dead-time freeze), EWMA the applied power and HR as the steady-state operating point.
     /// Cardiac drift slowly lowers the holding power over a long ride; the EWMA tracks it.
     private func learnHoldingPoint(trueError: Double, hr: Double) {
+        let floor = Double(config.powerFloor)
+        let ceiling = Double(max(config.powerFloor, config.powerCeiling))
+        // Learn only while genuinely settled at the true target, with the shaped setpoint
+        // caught up, the dead-time freeze over, and the command off the floor/ceiling, so a
+        // clamped or mid-slew value can't pollute the operating point.
         guard abs(trueError) <= config.deadbandBPM,
             abs(config.targetHeartRate - internalSetpoint) <= config.deadbandBPM,
-            integralFreezeRemaining <= 0
+            integralFreezeRemaining <= 0,
+            lastOutput > floor, lastOutput < ceiling
         else { return }
+        // Sample the *integral* (the de-slewed operating-point bias), not lastOutput, which
+        // also carries the slew/proportional transient and the deadband offset.
         if let hp = learnedHoldPower, let hhr = learnedHoldHR {
-            learnedHoldPower = hp + holdLearnRate * (lastOutput - hp)
+            learnedHoldPower = hp + holdLearnRate * (integral - hp)
             learnedHoldHR = hhr + holdLearnRate * (hr - hhr)
         } else {
-            learnedHoldPower = lastOutput
+            learnedHoldPower = integral
             learnedHoldHR = hr
         }
     }

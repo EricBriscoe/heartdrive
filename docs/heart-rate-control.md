@@ -74,8 +74,8 @@ Three additive changes that attack the three mechanisms above, **without changin
 remain bounded by the floor/ceiling and slew limits.
 
 1. **Seed to a learned steady-state holding power** (attacks #1). The loop now learns the
-   operating point: while settled at the target, it EWMAs the applied power and HR into
-   `learnedHoldPower`/`learnedHoldHR`. The seed becomes that holding power, extrapolated to a
+   operating point: while settled at the target (and off the floor/ceiling), it EWMAs the
+   integrator (the de-slewed operating-point bias) and HR into `learnedHoldPower`/`learnedHoldHR`. The seed becomes that holding power, extrapolated to a
    new target by the learned slope (`P_hold + (target − HR_hold)/gain`). Before any point is
    learned this session, it falls back to the damped cold-start seed. So the integrator lands
    *on* the holding power and the PI only trims a few watts. (The operating point currently
