@@ -47,6 +47,18 @@ enum ControlAggressiveness: String, CaseIterable, Codable, Identifiable {
         case .responsive: return 25
         }
     }
+
+    /// Reference-shaping time constant (seconds): how gently the internal setpoint ramps to a
+    /// new target. This is the setpoint-tracking (feedforward) axis, independent of lambda,
+    /// which tunes feedback/disturbance rejection. Larger = smoother approach, less overshoot,
+    /// slower arrival. Scaled with the preset so Responsiveness governs both axes coherently.
+    var setpointTau: Double {
+        switch self {
+        case .gentle: return 40
+        case .balanced: return 25
+        case .responsive: return 12
+        }
+    }
 }
 
 struct ErgControllerConfig: Equatable {
@@ -77,6 +89,7 @@ struct ErgControllerConfig: Equatable {
     var deadTime: Double = 15  // seconds
 
     var lambda: Double { aggressiveness.lambda }
+    var setpointTau: Double { aggressiveness.setpointTau }  // reference-shaping ramp time constant (s)
 }
 
 enum ErgControllerState: Equatable {
@@ -128,9 +141,8 @@ final class ErgController {
 
     // #2 reference shaping: P and I act on this ramped setpoint, not the raw target, so a
     // start or target step never kicks the command. Anchored to the current HR at prime and
-    // ramped toward the target with time constant setpointTau.
+    // ramped toward the target with the preset's setpointTau (config.setpointTau).
     private var internalSetpoint = 0.0
-    private let setpointTau: TimeInterval = 25
 
     // #3 conditional integration: hold the integrator for one dead-time window after a move
     // so it can't wind up before HR responds (the dominant overshoot path; back-calculation
@@ -283,7 +295,7 @@ final class ErgController {
 
         // #2: ramp the shaped setpoint toward the target (first-order, ~setpointTau), and
         // #3: bleed down the post-move dead-time integral freeze.
-        internalSetpoint += (config.targetHeartRate - internalSetpoint) * (1 - exp(-dt / setpointTau))
+        internalSetpoint += (config.targetHeartRate - internalSetpoint) * (1 - exp(-dt / config.setpointTau))
         integralFreezeRemaining = max(0, integralFreezeRemaining - dt)
 
         let trueError = config.targetHeartRate - hr

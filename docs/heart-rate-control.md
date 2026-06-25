@@ -81,7 +81,8 @@ remain bounded by the floor/ceiling and slew limits.
    *on* the holding power and the PI only trims a few watts. (The operating point currently
    resets each session; see Future work for cross-session persistence.)
 2. **Setpoint ramp / reference shaping** (attacks #3). An internal setpoint ramps first-order
-   (τ = 25 s) from the current HR toward the target, and the P and I terms act on this *shaped*
+   (τ = 12–40 s, set by the Responsiveness preset) from the current HR toward the target, and
+   the P and I terms act on this *shaped*
    error. A start or target change no longer presents a step, so there is no proportional kick
    and the loop approaches steady state from a moving reference. (We use a ramp rather than
    `b·SP` setpoint weighting because absolute HR values, ~130–150 bpm, break the
@@ -126,7 +127,7 @@ consistent.
 
 | Knob | Where | Effect |
 |---|---|---|
-| `setpointTau` (25 s) | `ErgController` | Larger = gentler approach, less overshoot, slower to reach target. |
+| `setpointTau` (40/25/12 s by preset) | `ControlAggressiveness` | Larger = gentler approach, less overshoot, slower to reach target. Set by the Responsiveness preset (the setpoint-tracking axis, independent of lambda). |
 | `integralFreezeRemaining` window = `deadTime` (15 s) | `ErgController` | Longer freeze = less dead-time wind-up, slower trim. |
 | `holdLearnRate` (0.05/tick) | `ErgController` | EWMA weight for the learned operating point. |
 | `feedforwardFraction` (0.7) | `ErgControllerConfig` | Cold-start damping only (before a holding point is learned). |
