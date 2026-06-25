@@ -59,9 +59,11 @@ struct ErgControllerConfig: Equatable {
     var deadbandBPM: Double = 2.5
     var updateInterval: TimeInterval = 5
 
-    /// Fraction of the model-predicted power step applied as feedforward when seeding
-    /// the operating point (on start and on target change). Under 1 deliberately
-    /// undershoots, so we approach the target from below and let feedback finish despite the wide per-rider spread in bpm-per-watt.
+    /// Cold-start feedforward fraction: the share of the model-predicted power step used to
+    /// seed the operating point before a per-rider holding power has been learned this
+    /// session. Under 1 deliberately undershoots, so we approach from below and let feedback
+    /// finish. Once a holding point is learned, the seed lands on it directly (see
+    /// ErgController.learnedHoldingPower).
     var feedforwardFraction: Double = 0.7
 
     var maxRampUpPerUpdate: Double { aggressiveness.rampUp }
@@ -124,6 +126,24 @@ final class ErgController {
     private var episodeStartHR = 0.0
     private var episodeElapsed = 0.0
 
+    // #2 reference shaping: P and I act on this ramped setpoint, not the raw target, so a
+    // start or target step never kicks the command. Anchored to the current HR at prime and
+    // ramped toward the target with time constant setpointTau.
+    private var internalSetpoint = 0.0
+    private let setpointTau: TimeInterval = 25
+
+    // #3 conditional integration: hold the integrator for one dead-time window after a move
+    // so it can't wind up before HR responds (the dominant overshoot path; back-calculation
+    // only catches floor/ceiling/slew clamping, not free-running dead-time wind-up).
+    private var integralFreezeRemaining = 0.0
+
+    // #1 learned steady-state operating point: the applied power observed while settled at a
+    // given HR. Seeds the integrator on start/target-change so the PI only trims a few watts
+    // instead of integrating a large bias across the dead time. EWMA, reset each session.
+    private var learnedHoldPower: Double?
+    private var learnedHoldHR: Double?
+    private let holdLearnRate = 0.05
+
     private let settleDuration: TimeInterval = 180
     private let hrDropoutGrace: TimeInterval = 20
     // Hold resistance through a brief coast, then release to the floor on a sustained
@@ -162,6 +182,10 @@ final class ErgController {
         plantGainEstimate = nil
         episodeArmed = false
         episodeActive = false
+        internalSetpoint = config.targetHeartRate
+        integralFreezeRemaining = 0
+        learnedHoldPower = nil
+        learnedHoldHR = nil
     }
 
     func stop() {
@@ -179,10 +203,16 @@ final class ErgController {
         guard delta != 0 else { return }
         let floor = Double(config.powerFloor)
         let ceiling = Double(max(config.powerFloor, config.powerCeiling))
-        let step = config.feedforwardFraction * delta / effectivePlantGain()
-        integral = min(max(integral + step, floor), ceiling)
+        // Re-seed the integrator to the holding power for the new target: the learned
+        // operating point when we have one, else a damped model step from the old point.
+        if let hold = learnedHoldingPower(for: config.targetHeartRate) {
+            integral = min(max(hold, floor), ceiling)
+        } else {
+            integral = min(max(integral + config.feedforwardFraction * delta / effectivePlantGain(), floor), ceiling)
+        }
         operatingTarget = config.targetHeartRate
         episodeArmed = true  // re-estimate the rider's gain across the move to the new target
+        integralFreezeRemaining = config.deadTime  // ride out the dead time before integrating
     }
 
     func update(filteredHR: Double?, isPedaling: Bool, dt: TimeInterval) -> ErgUpdate {
@@ -228,11 +258,17 @@ final class ErgController {
         let (kc, ki, backCalc) = gains()
 
         if !primed {
-            // Seed the operating point from the plant model so we start near the power
-            // that holds target instead of integrating up from startingPower.
-            let step = config.feedforwardFraction * (config.targetHeartRate - hr) / effectivePlantGain()
-            integral = min(max(Double(config.startingPower) + step, floor), ceiling)
+            // Seed the integrator to the steady-state holding power so we start near the
+            // power that holds target instead of integrating up across the dead time: the
+            // learned operating point if we have one this session, else a damped model step
+            // from the current HR.
+            let seed = learnedHoldingPower(for: config.targetHeartRate)
+                ?? (Double(config.startingPower)
+                    + config.feedforwardFraction * (config.targetHeartRate - hr) / effectivePlantGain())
+            integral = min(max(seed, floor), ceiling)
             operatingTarget = config.targetHeartRate
+            internalSetpoint = hr  // start the shaped setpoint at the current HR (no kick)
+            integralFreezeRemaining = config.deadTime
             primed = true
             episodeArmed = true
         }
@@ -245,8 +281,16 @@ final class ErgController {
             episodeArmed = false
         }
 
-        let rawError = config.targetHeartRate - hr
-        let error = abs(rawError) <= config.deadbandBPM ? 0 : rawError
+        // #2: ramp the shaped setpoint toward the target (first-order, ~setpointTau), and
+        // #3: bleed down the post-move dead-time integral freeze.
+        internalSetpoint += (config.targetHeartRate - internalSetpoint) * (1 - exp(-dt / setpointTau))
+        integralFreezeRemaining = max(0, integralFreezeRemaining - dt)
+
+        let trueError = config.targetHeartRate - hr
+        let shapedError = internalSetpoint - hr
+        // P and I act on the shaped (ramped) setpoint so a start or target step doesn't kick
+        // the command; the deadband references the shaped error.
+        let error = abs(shapedError) <= config.deadbandBPM ? 0 : shapedError
 
         // PI command before limiting; the integral carries the operating-point bias.
         let unclamped = kc * error + integral
@@ -257,21 +301,24 @@ final class ErgController {
             max(actuator, lastOutput - rampDown),
             lastOutput + rampUp)
 
-        // Integrate with back-calculation against the applied output, so the
-        // integral can't wind up against the floor/ceiling OR the slew limit. Tracking
-        // the rate-limited output (not just the actuator clamp) is what stops a fast
-        // ramp from overshooting and keeps the feedforward preload from over-winding.
-        integral += (ki * error + backCalc * (output - unclamped)) * dt
-        integral = min(max(integral, floor), ceiling)
+        // Integrate with back-calculation against the applied output, so the integral
+        // can't wind up against the floor/ceiling OR the slew limit, except during the
+        // post-move dead-time window, where it's frozen entirely so it can't accumulate
+        // before HR has had a chance to respond (the dominant overshoot path).
+        if integralFreezeRemaining <= 0 {
+            integral += (ki * error + backCalc * (output - unclamped)) * dt
+            integral = min(max(integral, floor), ceiling)
+        }
 
         lastOutput = output
 
-        updateGainEstimate(rawError: rawError, hr: hr, dt: dt)
+        updateGainEstimate(rawError: trueError, hr: hr, dt: dt)
+        learnHoldingPoint(trueError: trueError, hr: hr)
 
         let state: ErgControllerState
-        if output >= ceiling && error > 0 {
+        if output >= ceiling && trueError > config.deadbandBPM {
             state = .atCeiling
-        } else if output <= floor && error < 0 {
+        } else if output <= floor && trueError < -config.deadbandBPM {
             state = .atFloor
         } else if settleRemaining > 0 {
             state = .settling
@@ -329,6 +376,30 @@ final class ErgController {
             plantGainEstimate = estimate + gainAdaptRate * (sample - estimate)
         } else {
             plantGainEstimate = sample
+        }
+    }
+
+    /// Holding power for `target` extrapolated from the learned operating point by the
+    /// per-rider slope; nil until an operating point has been learned this session.
+    private func learnedHoldingPower(for target: Double) -> Double? {
+        guard let hp = learnedHoldPower, let hhr = learnedHoldHR else { return nil }
+        return hp + (target - hhr) / effectivePlantGain()
+    }
+
+    /// While HR is settled at the true target and the shaped setpoint has caught up (past the
+    /// dead-time freeze), EWMA the applied power and HR as the steady-state operating point.
+    /// Cardiac drift slowly lowers the holding power over a long ride; the EWMA tracks it.
+    private func learnHoldingPoint(trueError: Double, hr: Double) {
+        guard abs(trueError) <= config.deadbandBPM,
+            abs(config.targetHeartRate - internalSetpoint) <= config.deadbandBPM,
+            integralFreezeRemaining <= 0
+        else { return }
+        if let hp = learnedHoldPower, let hhr = learnedHoldHR {
+            learnedHoldPower = hp + holdLearnRate * (lastOutput - hp)
+            learnedHoldHR = hhr + holdLearnRate * (hr - hhr)
+        } else {
+            learnedHoldPower = lastOutput
+            learnedHoldHR = hr
         }
     }
 }
