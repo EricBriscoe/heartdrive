@@ -10,9 +10,11 @@ struct RideSettings: Codable, Equatable {
     var showCadenceGuide: Bool = false
 
     // The whole resistance band is derived from one number (FTP) instead of three separate
-    // settings: a 30% floor, a 300% safety ceiling, and a 50% starting power.
+    // settings: a 30% floor, a 150% safety ceiling, and a 50% starting power. 150% sits just
+    // above any power the HR loop would legitimately need (top of the anaerobic zone) and
+    // caps a sensor-glitch runaway well short of an un-pedalable wall.
     static let floorFraction = 0.30
-    static let ceilingFraction = 3.00
+    static let ceilingFraction = 1.50
     static let startFraction = 0.50
     static func watts(_ ftp: Int, _ fraction: Double) -> Int { Int((Double(ftp) * fraction).rounded()) }
 
