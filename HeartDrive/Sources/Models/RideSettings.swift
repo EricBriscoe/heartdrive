@@ -1,10 +1,27 @@
 import Foundation
 import Observation
 
+/// Where the phone reads the rider's heart rate. The Apple Watch streams it over
+/// WatchConnectivity; Bluetooth reads a standard BLE chest strap directly. The rider picks
+/// one explicitly — the unselected source is ignored even if it's live.
+enum HRSource: String, CaseIterable, Codable, Identifiable {
+    case appleWatch
+    case bluetooth
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .appleWatch: return "Apple Watch"
+        case .bluetooth: return "Bluetooth"
+        }
+    }
+}
+
 struct RideSettings: Codable, Equatable {
     var targetHeartRate: Int = 140
     var ftp: Int = 200
     var aggressiveness: ControlAggressiveness = .balanced
+    var hrSource: HRSource = .appleWatch
     var broadcastToZwift: Bool = false
     var cadenceTarget: Int = 90
     var showCadenceGuide: Bool = false
@@ -33,6 +50,7 @@ extension RideSettings {
         aggressiveness =
             try container.decodeIfPresent(ControlAggressiveness.self, forKey: .aggressiveness)
             ?? defaults.aggressiveness
+        hrSource = try container.decodeIfPresent(HRSource.self, forKey: .hrSource) ?? defaults.hrSource
         broadcastToZwift =
             try container.decodeIfPresent(Bool.self, forKey: .broadcastToZwift) ?? defaults.broadcastToZwift
         cadenceTarget = try container.decodeIfPresent(Int.self, forKey: .cadenceTarget) ?? defaults.cadenceTarget
@@ -46,6 +64,7 @@ final class SettingsStore {
     var targetHeartRate: Int
     var ftp: Int
     var aggressiveness: ControlAggressiveness
+    var hrSource: HRSource
     var broadcastToZwift: Bool
     var cadenceTarget: Int
     var showCadenceGuide: Bool
@@ -61,6 +80,7 @@ final class SettingsStore {
         targetHeartRate = loaded.targetHeartRate
         ftp = loaded.ftp
         aggressiveness = loaded.aggressiveness
+        hrSource = loaded.hrSource
         broadcastToZwift = loaded.broadcastToZwift
         cadenceTarget = loaded.cadenceTarget
         showCadenceGuide = loaded.showCadenceGuide
@@ -71,6 +91,7 @@ final class SettingsStore {
             targetHeartRate: targetHeartRate,
             ftp: ftp,
             aggressiveness: aggressiveness,
+            hrSource: hrSource,
             broadcastToZwift: broadcastToZwift,
             cadenceTarget: cadenceTarget,
             showCadenceGuide: showCadenceGuide)

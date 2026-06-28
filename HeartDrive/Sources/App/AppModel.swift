@@ -19,6 +19,7 @@ final class AppModel {
     let heart = HeartRateHub()
     let connectivity = PhoneConnectivity()
     let broadcaster = HeartRateBroadcaster()
+    let hrMonitor = HeartRateMonitorManager()
     let settings = SettingsStore()
 
     private(set) var isControlling = false
@@ -43,18 +44,34 @@ final class AppModel {
 
     private init() {
         controller = ErgController(config: AppModel.config(from: settings.snapshot))
-        connectivity.onHeartRate = { [weak self] hr in self?.ingest(hr) }
+        connectivity.onHeartRate = { [weak self] hr in self?.ingestWatch(hr) }
         connectivity.onTargetChanged = { [weak self] bpm in self?.applyRemoteTarget(bpm) }
         connectivity.onActiveChanged = { [weak self] active in self?.applyRemoteActive(active) }
+        hrMonitor.onHeartRate = { [weak self] bpm, at in self?.ingestBLE(bpm, at) }
         connectivity.seedTarget(settings.targetHeartRate)
         connectivity.activate()
         requestWatchLaunchAuthorization()
         if settings.broadcastToZwift { broadcaster.start() }
+        hrMonitor.autoReconnect = settings.hrSource == .bluetooth
+        if hrMonitor.autoReconnect { hrMonitor.reconnectIfPaired() }
     }
 
-    private func ingest(_ hr: HeartRate) {
-        heart.ingest(bpm: hr.bpm, sampleTime: hr.at, source: "Apple Watch")
-        broadcaster.update(bpm: Int(hr.bpm.rounded()))
+    private func ingestWatch(_ hr: HeartRate) {
+        acceptHR(bpm: hr.bpm, sampleTime: hr.at, source: .appleWatch)
+    }
+
+    private func ingestBLE(_ bpm: Int, _ at: Date) {
+        acceptHR(bpm: Double(bpm), sampleTime: at, source: .bluetooth)
+    }
+
+    /// Funnel both HR sources through one gate so only the rider's selected source feeds the hub —
+    /// the hub blends its last samples, so letting the watch and a strap both in would corrupt the
+    /// control heart rate. The Zwift rebroadcast rides along with whichever source wins.
+    private func acceptHR(bpm: Double, sampleTime: Date, source: HRSource) {
+        guard source == settings.hrSource else { return }
+        let label = source == .bluetooth ? (hrMonitor.connectedName ?? source.label) : source.label
+        heart.ingest(bpm: bpm, sampleTime: sampleTime, source: label)
+        broadcaster.update(bpm: Int(bpm.rounded()))
     }
 
     /// User tapped Start on the phone: begin control, wake the watch to start its workout, and
@@ -63,7 +80,9 @@ final class AppModel {
         guard !isControlling else { return }
         beginControl()
         connectivity.sendLocalActive(true)
-        launchWatchWorkout()
+        // The watch is the HealthKit HR source; in Bluetooth mode the strap replaces it, so don't
+        // wake the watch — a true phone-only ride.
+        if settings.hrSource == .appleWatch { launchWatchWorkout() }
     }
 
     /// User tapped Stop on the phone.
@@ -167,6 +186,16 @@ final class AppModel {
     func setCadenceGuide(_ on: Bool) {
         settings.showCadenceGuide = on
         settings.save()
+    }
+
+    /// React to the rider switching HR source in Settings: arm/disarm strap auto-reconnect and,
+    /// when switching to Bluetooth, reconnect the paired strap so they don't have to re-pair.
+    func applyHRSource() {
+        // Clear the previous source's reading so switching doesn't leave a stale value lingering
+        // until it ages out (~12s); the newly selected source repopulates on its next sample.
+        heart.reset()
+        hrMonitor.autoReconnect = settings.hrSource == .bluetooth
+        if settings.hrSource == .bluetooth { hrMonitor.reconnectIfPaired() }
     }
 
     private func startTimer() {

@@ -97,12 +97,12 @@ extension WatchLinkState {
         }
     }
 
-    func label(source: String?) -> String {
+    func label(source: String?, hrSource: HRSource) -> String {
         switch self {
-        case .live: return source ?? "Apple Watch"
+        case .live: return source ?? hrSource.label
         case .reconnecting: return "Reconnecting…"
-        case .lost: return "Watch lost"
-        case .idle: return "Start on Watch"
+        case .lost: return hrSource == .bluetooth ? "HR lost" : "Watch lost"
+        case .idle: return hrSource == .bluetooth ? "Connect HR monitor" : "Start on Watch"
         }
     }
 }

@@ -33,7 +33,7 @@ struct RootView: View {
                     }
                 }
                 .sheet(isPresented: $showSettings) {
-                    SettingsView(settings: model.settings)
+                    SettingsView(settings: model.settings, monitor: model.hrMonitor)
                 }
                 .sheet(isPresented: $showConnect) {
                     TrainerConnectView(trainer: model.trainer)
@@ -46,5 +46,6 @@ struct RootView: View {
             if phase == .active { UIApplication.shared.isIdleTimerDisabled = keepAwake }
         }
         .onChange(of: model.settings.targetHeartRate) { _, _ in model.reconcileTargetEdit() }
+        .onChange(of: model.settings.hrSource) { _, _ in model.applyHRSource() }
     }
 }

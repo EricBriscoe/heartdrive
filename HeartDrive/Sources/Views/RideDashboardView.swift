@@ -237,7 +237,7 @@ struct RideDashboardView: View {
         TimelineView(.periodic(from: .now, by: 1)) { _ in
             let link = model.watchLink
             Label {
-                Text(link.label(source: model.heart.source))
+                Text(link.label(source: model.heart.source, hrSource: model.settings.hrSource))
             } icon: {
                 Image(systemName: link.icon)
                     .symbolEffect(.pulse, options: .repeating, isActive: link.pulses && scenePhase == .active)

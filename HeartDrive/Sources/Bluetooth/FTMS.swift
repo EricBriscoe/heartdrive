@@ -11,6 +11,12 @@ enum BLEUUID {
     static let cyclingPowerMeasurement = CBUUID(string: "2A63")
     static let wahooControlPoint = CBUUID(string: "A026E005-0A7D-4AB3-97FA-F1500F9FEB8B")
 
+    // Standard GATT Heart Rate Service (for reading an external BLE chest strap as the
+    // control HR source). Distinct from HeartRateBroadcaster, which *advertises* these
+    // same UUIDs as a peripheral.
+    static let heartRateService = CBUUID(string: "180D")
+    static let heartRateMeasurement = CBUUID(string: "2A37")
+
     static let trainerServices = [fitnessMachineService, cyclingPowerService]
 }
 
@@ -78,6 +84,17 @@ enum CyclingPowerMeasurement {
         var reader = ByteReader(data)
         guard reader.u16() != nil else { return nil }  // flags
         return reader.i16()  // instantaneous power follows immediately
+    }
+}
+
+/// Heart Rate Measurement (0x2A37): a flags byte followed by the heart rate. Flags bit 0
+/// selects the value width (0 → uint8, 1 → uint16); optional energy-expended and RR-interval
+/// fields may follow but we only need the bpm.
+enum HeartRateMeasurement {
+    static func bpm(_ data: Data) -> Int? {
+        var reader = ByteReader(data)
+        guard let flags = reader.u8() else { return nil }
+        return flags & 0x01 == 0 ? reader.u8() : reader.u16()
     }
 }
 

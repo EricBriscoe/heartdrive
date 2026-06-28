@@ -2,6 +2,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @Bindable var settings: SettingsStore
+    var monitor: HeartRateMonitorManager
+    @State private var showHRConnect = false
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
@@ -46,6 +48,35 @@ struct SettingsView: View {
                     )
                 }
 
+                Section {
+                    Picker("Heart rate source", selection: $settings.hrSource) {
+                        ForEach(HRSource.allCases) { source in
+                            Text(source.label).tag(source)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+
+                    if settings.hrSource == .bluetooth {
+                        Button {
+                            showHRConnect = true
+                        } label: {
+                            HStack {
+                                Text("Heart-rate monitor")
+                                Spacer()
+                                Text(monitor.connectedName ?? "Not connected").foregroundStyle(.secondary)
+                                Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
+                            }
+                        }
+                        .tint(.primary)
+                    }
+                } header: {
+                    Text("Heart rate source")
+                } footer: {
+                    Text(
+                        "Apple Watch streams heart rate from your wrist. Bluetooth reads a chest strap or armband directly — pick it here and the watch stays out of the ride."
+                    )
+                }
+
             }
             .navigationTitle("Settings")
             .toolbar {
@@ -54,6 +85,9 @@ struct SettingsView: View {
                 }
             }
             .onChange(of: settings.snapshot) { settings.save() }
+            .sheet(isPresented: $showHRConnect) {
+                HeartRateMonitorConnectView(monitor: monitor)
+            }
         }
     }
 }
