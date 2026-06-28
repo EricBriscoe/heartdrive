@@ -10,7 +10,7 @@ options:
 settings:
   base:
     MARKETING_VERSION: "0.1.0"
-    CURRENT_PROJECT_VERSION: "25"
+    CURRENT_PROJECT_VERSION: "26"
     SWIFT_VERSION: "5.0"
     DEVELOPMENT_TEAM: WJPH3B5Z5U
     CODE_SIGN_STYLE: Automatic
@@ -39,6 +39,9 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         CFBundleShortVersionString: "$(MARKETING_VERSION)"
         ITSAppUsesNonExemptEncryption: false
+        # Expose the Documents folder (control-*.csv diagnostic logs) over Finder/Files.
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         UILaunchScreen: {}
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait

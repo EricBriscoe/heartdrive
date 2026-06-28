@@ -25,6 +25,7 @@ final class AppModel {
     private(set) var lastUpdate: ErgUpdate?
 
     @ObservationIgnored private let controller: ErgController
+    @ObservationIgnored private let controlLogger = ControlLogger()
     @ObservationIgnored private var timer: Timer?
     @ObservationIgnored private var lastTickAt: Date?
     @ObservationIgnored private let lostAfter: TimeInterval = 30
@@ -76,6 +77,7 @@ final class AppModel {
         guard !isControlling else { return }
         controller.config = AppModel.config(from: settings.snapshot)
         controller.start()
+        controlLogger.start()
         isControlling = true
         startTimer()
     }
@@ -83,6 +85,7 @@ final class AppModel {
     private func endControl() {
         guard isControlling else { return }
         controller.stop()
+        controlLogger.stop()
         isControlling = false
         timer?.invalidate()
         timer = nil
@@ -200,6 +203,20 @@ final class AppModel {
         if trainer.isReady {
             trainer.setTargetPower(update.targetPower)
         }
+
+        // Diagnostic: record commanded vs delivered power + control state to spot ERG drop-outs.
+        controlLogger.log(
+            targetHR: Int(controller.config.targetHeartRate),
+            controlHR: heart.controlBPM,
+            commandedW: update.targetPower,
+            deliveredW: trainer.powerWatts,
+            cadence: trainer.cadenceRPM,
+            dt: dt,
+            state: update.state,
+            controlReady: trainer.controlReady,
+            isReady: trainer.isReady,
+            conflict: trainer.controlConflict,
+            mode: trainer.controlModeName)
     }
 
     private static func config(from settings: RideSettings) -> ErgControllerConfig {
