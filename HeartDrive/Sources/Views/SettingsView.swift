@@ -6,6 +6,22 @@ struct SettingsView: View {
     @State private var showHRConnect = false
     @Environment(\.dismiss) private var dismiss
 
+    /// Strap row text: name plus the live reading, so "connected but silent" is visible at a glance.
+    private func monitorStatusText(now: Date) -> String {
+        switch monitor.connectionState {
+        case .connected:
+            let name = monitor.connectedName ?? "Connected"
+            guard let bpm = monitor.lastBPM, let at = monitor.lastBPMAt else { return "\(name) · no reading yet" }
+            let age = Int(now.timeIntervalSince(at))
+            return age > 12 ? "\(name) · no reading for \(age) s" : "\(name) · \(bpm) bpm"
+        case .connecting: return "\(monitor.connectedName ?? "Monitor") · connecting…"
+        case .scanning: return "Scanning…"
+        case .poweredOff: return "Bluetooth off"
+        case .unauthorized: return "No Bluetooth permission"
+        case .idle: return "Not connected"
+        }
+    }
+
     var body: some View {
         NavigationStack {
             Form {
@@ -63,7 +79,9 @@ struct SettingsView: View {
                             HStack {
                                 Text("Heart-rate monitor")
                                 Spacer()
-                                Text(monitor.connectedName ?? "Not connected").foregroundStyle(.secondary)
+                                TimelineView(.periodic(from: .now, by: 1)) { context in
+                                    Text(monitorStatusText(now: context.date)).foregroundStyle(.secondary)
+                                }
                                 Image(systemName: "chevron.right").font(.caption).foregroundStyle(.tertiary)
                             }
                         }

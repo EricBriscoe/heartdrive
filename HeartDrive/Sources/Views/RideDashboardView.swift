@@ -190,7 +190,9 @@ struct RideDashboardView: View {
                     .foregroundStyle(model.broadcaster.state == .connected ? .green : .secondary)
                 VStack(alignment: .leading, spacing: 1) {
                     Text("Broadcast HR to Zwift").font(.subheadline.weight(.medium))
-                    Text(broadcastStatusText).font(.caption2).foregroundStyle(.secondary)
+                    TimelineView(.periodic(from: .now, by: 1)) { context in
+                        Text(broadcastStatusText(now: context.date)).font(.caption2).foregroundStyle(.secondary)
+                    }
                 }
             }
         }
@@ -198,11 +200,25 @@ struct RideDashboardView: View {
         .background(Color(uiColor: .secondarySystemBackground), in: RoundedRectangle(cornerRadius: 16))
     }
 
-    private var broadcastStatusText: String {
-        switch model.broadcaster.state {
+    /// Names the exact stage the rebroadcast is at so a stalled pairing is diagnosable from the
+    /// phone: is anything subscribed, and did a reading actually go out.
+    private func broadcastStatusText(now: Date) -> String {
+        let broadcaster = model.broadcaster
+        switch broadcaster.state {
         case .off: return "Pair “HeartDrive” as a Heart Rate sensor in Zwift"
-        case .advertising: return "Advertising: waiting for Zwift to connect"
-        case .connected: return "Connected to Zwift"
+        case .advertising:
+            return broadcaster.hasReading
+                ? "Advertising: waiting for Zwift to connect"
+                : "Advertising: waiting for Zwift to connect (no heart rate to send)"
+        case .connected:
+            let subscribers = broadcaster.subscriberCount == 1 ? "1 app" : "\(broadcaster.subscriberCount) apps"
+            guard let bpm = broadcaster.lastSentBPM, let at = broadcaster.lastSentAt else {
+                return "Connected to \(subscribers), no heart rate sent yet"
+            }
+            let age = Int(now.timeIntervalSince(at))
+            return age > 5
+                ? "Connected to \(subscribers), nothing sent for \(age) s"
+                : "Connected to \(subscribers), sending \(bpm) bpm"
         }
     }
 

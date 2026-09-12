@@ -1,6 +1,7 @@
 import CoreBluetooth
 import Foundation
 import Observation
+import os
 
 enum HRMonitorConnectionState: Equatable {
     case poweredOff
@@ -37,7 +38,13 @@ final class HeartRateMonitorManager: NSObject {
     /// the HR-source setting so a strap is only auto-connected while the Bluetooth source is chosen.
     var autoReconnect = false
 
+    /// Most recent reading accepted from the strap, for the Settings row and for logs.
+    private(set) var lastBPM: Int?
+    private(set) var lastBPMAt: Date?
+
     var isConnected: Bool { connectionState == .connected }
+
+    private static let log = Logger(subsystem: "com.ericbriscoe.HeartDrive", category: "hrm")
 
     private var central: CBCentralManager!
     private var peripheralsByID: [UUID: CBPeripheral] = [:]
@@ -72,6 +79,7 @@ final class HeartRateMonitorManager: NSObject {
     }
 
     func disconnect() {
+        Self.log.info("disconnect requested")
         intentionalDisconnect = true
         if let connected { central.cancelPeripheralConnection(connected) }
         connected = nil
@@ -104,12 +112,14 @@ final class HeartRateMonitorManager: NSObject {
         connectionState = .connecting
         connectedName = peripheral.name
         statusMessage = "Connecting…"
+        Self.log.info("connecting to \(peripheral.name ?? "unnamed", privacy: .public)")
         central.connect(peripheral, options: nil)
     }
 }
 
 extension HeartRateMonitorManager: CBCentralManagerDelegate {
     func centralManagerDidUpdateState(_ central: CBCentralManager) {
+        Self.log.info("central state \(central.state.rawValue)")
         switch central.state {
         case .poweredOn:
             if connectionState == .poweredOff || connectionState == .unauthorized { connectionState = .idle }
@@ -140,6 +150,7 @@ extension HeartRateMonitorManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
+        Self.log.info("connected to \(peripheral.name ?? "unnamed", privacy: .public)")
         connectionState = .connected
         connectedName = peripheral.name
         statusMessage = "Connected."
@@ -147,12 +158,18 @@ extension HeartRateMonitorManager: CBCentralManagerDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didFailToConnect peripheral: CBPeripheral, error: Error?) {
+        Self.log.error("connect failed: \(error?.localizedDescription ?? "unknown", privacy: .public)")
         statusMessage = "Failed to connect: \(error?.localizedDescription ?? "unknown")"
         connectionState = .idle
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
+        Self.log.notice(
+            "disconnected (\(self.intentionalDisconnect ? "intentional" : "unexpected", privacy: .public)): \(error?.localizedDescription ?? "no error", privacy: .public)"
+        )
         connectedName = nil
+        lastBPM = nil
+        lastBPMAt = nil
         if intentionalDisconnect {
             connected = nil
             connectionState = .idle
@@ -166,23 +183,51 @@ extension HeartRateMonitorManager: CBCentralManagerDelegate {
 
 extension HeartRateMonitorManager: CBPeripheralDelegate {
     func peripheral(_ peripheral: CBPeripheral, didDiscoverServices error: Error?) {
-        for service in peripheral.services ?? [] where service.uuid == BLEUUID.heartRateService {
+        if let error {
+            Self.log.error("service discovery failed: \(error.localizedDescription, privacy: .public)")
+            return
+        }
+        let services = (peripheral.services ?? []).filter { $0.uuid == BLEUUID.heartRateService }
+        if services.isEmpty { Self.log.error("no Heart Rate Service on the connected device") }
+        for service in services {
             peripheral.discoverCharacteristics([BLEUUID.heartRateMeasurement], for: service)
         }
     }
 
     func peripheral(_ peripheral: CBPeripheral, didDiscoverCharacteristicsFor service: CBService, error: Error?) {
+        if let error {
+            Self.log.error("characteristic discovery failed: \(error.localizedDescription, privacy: .public)")
+            return
+        }
         for characteristic in service.characteristics ?? [] where characteristic.uuid == BLEUUID.heartRateMeasurement {
             peripheral.setNotifyValue(true, for: characteristic)
         }
     }
 
+    func peripheral(
+        _ peripheral: CBPeripheral, didUpdateNotificationStateFor characteristic: CBCharacteristic, error: Error?
+    ) {
+        if let error {
+            Self.log.error("notify subscribe failed: \(error.localizedDescription, privacy: .public)")
+        } else {
+            Self.log.info("HR notifications \(characteristic.isNotifying ? "on" : "off", privacy: .public)")
+        }
+    }
+
     func peripheral(_ peripheral: CBPeripheral, didUpdateValueFor characteristic: CBCharacteristic, error: Error?) {
+        if let error {
+            Self.log.error("HR update failed: \(error.localizedDescription, privacy: .public)")
+            return
+        }
         // Range-gate at the source so a glitchy strap can't push 0/garbage into the hub's EWMA or
         // the Zwift rebroadcast. Matches ErgController.validHRRange.
-        guard characteristic.uuid == BLEUUID.heartRateMeasurement, let data = characteristic.value,
-            let bpm = HeartRateMeasurement.bpm(data), (30...230).contains(bpm)
-        else { return }
+        guard characteristic.uuid == BLEUUID.heartRateMeasurement, let data = characteristic.value else { return }
+        guard let bpm = HeartRateMeasurement.bpm(data), (30...230).contains(bpm) else {
+            Self.log.debug("dropped out-of-range or unparseable HR frame (\(data.count) bytes)")
+            return
+        }
+        lastBPM = bpm
+        lastBPMAt = Date()
         onHeartRate?(bpm, Date())
     }
 }

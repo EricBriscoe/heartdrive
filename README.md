@@ -165,7 +165,15 @@ watch's heart rate as a standard Bluetooth Heart Rate sensor. In Zwift's pairing
 screen, pair **"HeartDrive"** under **Heart Rate**; your live pulse now shows
 in-game, no chest strap needed. This runs alongside trainer control (the phone is
 a Bluetooth *central* to the KICKR and a *peripheral* for HR at the same time).
-The status line under the toggle shows *Advertising* → *Connected to Zwift*.
+The status line under the toggle shows *Advertising* → *Connected to 1 app, sending N bpm*.
+
+**Using a Bluetooth chest strap (e.g. Polar H10) instead of the watch?** Zwift
+remembers its last heart-rate sensor and auto-pairs it. If you ever paired the
+strap in Zwift directly, it will keep hunting for the strap, which HeartDrive
+already holds (a stock H10 accepts one Bluetooth connection), and Zwift will never
+pick "HeartDrive". In Zwift's pairing screen, unpair the strap and pair
+**"HeartDrive"** instead. The same one-connection rule means the strap must not be
+added to your Apple Watch as a Health Device or open in the Polar app while you ride.
 
 ---
 
