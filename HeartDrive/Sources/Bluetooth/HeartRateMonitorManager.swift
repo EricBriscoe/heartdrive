@@ -19,7 +19,7 @@ struct DiscoveredHRMonitor: Identifiable, Equatable {
 
 /// Reads heart rate from a standard BLE heart-rate monitor (GATT Heart Rate Service 0x180D,
 /// Heart Rate Measurement 0x2A37) as an alternative to the Apple Watch. A read-only mirror of
-/// `TrainerManager`'s central pattern — scan → connect → subscribe → parse → emit — with none of
+/// `TrainerManager`'s central pattern (scan → connect → subscribe → parse → emit) with none of
 /// the ERG/control machinery. Owns its own `CBCentralManager`; the phone already runs a second
 /// central (`TrainerManager`) and a peripheral (`HeartRateBroadcaster`) concurrently.
 @Observable
@@ -30,7 +30,7 @@ final class HeartRateMonitorManager: NSObject {
     private(set) var statusMessage: String?
 
     /// Fired on every Heart Rate Measurement notification with (bpm, receiptTime). 0x2A37 carries
-    /// no sample timestamp, so receipt time is the sample time — fine for `HeartRateHub`'s dedupe.
+    /// no sample timestamp, so receipt time is the sample time, which is fine for `HeartRateHub`'s dedupe.
     var onHeartRate: ((Int, Date) -> Void)?
 
     /// Whether to reconnect to the paired monitor when Bluetooth powers on. Set by AppModel from
@@ -82,7 +82,7 @@ final class HeartRateMonitorManager: NSObject {
     }
 
     /// Reconnect to the previously paired monitor, if Bluetooth is on and one was saved. Safe to
-    /// call when Bluetooth isn't ready yet — it no-ops, and `centralManagerDidUpdateState` retries
+    /// call when Bluetooth isn't ready yet; it no-ops, and `centralManagerDidUpdateState` retries
     /// on power-on when `autoReconnect` is set.
     func reconnectIfPaired() {
         guard

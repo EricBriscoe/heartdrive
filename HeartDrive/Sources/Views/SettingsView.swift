@@ -73,7 +73,7 @@ struct SettingsView: View {
                     Text("Heart rate source")
                 } footer: {
                     Text(
-                        "Apple Watch streams heart rate from your wrist. Bluetooth reads a chest strap or armband directly — pick it here and the watch stays out of the ride."
+                        "Apple Watch streams heart rate from your wrist. Bluetooth reads a chest strap or armband directly. Pick it here and the watch stays out of the ride."
                     )
                 }
 

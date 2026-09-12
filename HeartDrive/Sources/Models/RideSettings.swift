@@ -3,7 +3,7 @@ import Observation
 
 /// Where the phone reads the rider's heart rate. The Apple Watch streams it over
 /// WatchConnectivity; Bluetooth reads a standard BLE chest strap directly. The rider picks
-/// one explicitly — the unselected source is ignored even if it's live.
+/// one explicitly; the unselected source is ignored even if it's live.
 enum HRSource: String, CaseIterable, Codable, Identifiable {
     case appleWatch
     case bluetooth

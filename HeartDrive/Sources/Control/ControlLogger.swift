@@ -5,7 +5,7 @@ import os
 /// app's Documents directory (pullable over Finder/Files with file sharing enabled), one row per
 /// 5 s tick. Its whole purpose is to answer one question the FIT/Zwift data cannot: does the
 /// *commanded* power the controller asks for actually match the *delivered* power the trainer
-/// reports — i.e. is ERG holding — and what is the control state when it diverges.
+/// reports (i.e. is ERG holding) and what is the control state when it diverges.
 ///
 /// Deliberately lightweight: a single open FileHandle, ~200 bytes/tick on the main run loop, no
 /// dependencies. Remove the call sites in AppModel once the ERG-hold question is settled.
@@ -36,7 +36,7 @@ final class ControlLogger {
         guard let dir = try? FileManager.default.url(
             for: .documentDirectory, in: .userDomainMask, appropriateFor: nil, create: true)
         else {
-            Self.log.error("control: no Documents dir — logging disabled")
+            Self.log.error("control: no Documents dir; logging disabled")
             return
         }
         Self.pruneOldLogs(in: dir)
@@ -51,7 +51,7 @@ final class ControlLogger {
             self.fileName = name
             Self.log.info("control: logging to \(name, privacy: .public)")
         } catch {
-            Self.log.error("control: open failed — \(error.localizedDescription, privacy: .public)")
+            Self.log.error("control: open failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
@@ -79,7 +79,7 @@ final class ControlLogger {
             mode ?? "",
         ].joined(separator: ",") + "\n"
         do { try handle.write(contentsOf: Data(row.utf8)) }
-        catch { Self.log.error("control: write failed — \(error.localizedDescription, privacy: .public)") }
+        catch { Self.log.error("control: write failed: \(error.localizedDescription, privacy: .public)") }
 
         // Surface a divergence live in Console so the failure mode is visible mid-ride without
         // pulling the file: under working ERG, delivered should track commanded within a few watts.

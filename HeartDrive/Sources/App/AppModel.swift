@@ -64,7 +64,7 @@ final class AppModel {
         acceptHR(bpm: Double(bpm), sampleTime: at, source: .bluetooth)
     }
 
-    /// Funnel both HR sources through one gate so only the rider's selected source feeds the hub —
+    /// Funnel both HR sources through one gate so only the rider's selected source feeds the hub;
     /// the hub blends its last samples, so letting the watch and a strap both in would corrupt the
     /// control heart rate. The Zwift rebroadcast rides along with whichever source wins.
     private func acceptHR(bpm: Double, sampleTime: Date, source: HRSource) {
@@ -81,7 +81,7 @@ final class AppModel {
         beginControl()
         connectivity.sendLocalActive(true)
         // The watch is the HealthKit HR source; in Bluetooth mode the strap replaces it, so don't
-        // wake the watch — a true phone-only ride.
+        // wake the watch: a true phone-only ride.
         if settings.hrSource == .appleWatch { launchWatchWorkout() }
     }
 
