@@ -19,7 +19,7 @@ Apple Watch ──HKWorkoutSession──► live HR
      │  (WatchConnectivity)
      ▼
   iPhone (HeartDrive)
-     │  PI control loop: HR error ──► target watts
+     │  Step-and-wait control: HR band ──► target watts
      ▼
   KICKR Core ◄──FTMS ERG (Bluetooth)── set target power
      ▲
@@ -31,9 +31,9 @@ Apple Watch ──HKWorkoutSession──► live HR
   and streams heart rate to the phone over **HealthKit workout-session
   mirroring** is reliable in the background and screen-off, where the older
   WatchConnectivity path stalled (WCSession is kept only as a fallback).
-- The **phone app** owns the trainer over Bluetooth and runs a slow, heavily
-  damped **PI controller** that converts heart-rate error into an ERG target
-  power, then writes it to the KICKR via the standard **FTMS** control point
+- The **phone app** owns the trainer over Bluetooth and runs a conservative
+  **step-and-wait controller** that keeps HR near an adjustable target by making
+  small ERG power changes via the standard **FTMS** control point
   (with a Wahoo-proprietary fallback).
 - **Zwift** connects to the same trainer *read-only* for the visuals and ride
   recording. The KICKR Core supports up to 3 simultaneous Bluetooth links, so
@@ -144,15 +144,15 @@ after the other app stops.
 2. **Watch:** open HeartDrive on your Apple Watch, grant HealthKit access on
    first launch, and it will begin reading HR.
 3. **Set your target HR** right on the main screen with the big **− / +** buttons
-   (adjust it any time, mid-ride). Floor/ceiling and responsiveness live under the
-   **gear icon**; the ceiling is your main safety limit.
+   (adjust it any time, mid-ride). Set FTP under the **gear icon**; starting watts
+   and power bounds are derived from it.
 4. **Zwift:** start your ride on the other device (paired as above).
 5. **Start:** tap **Start heart-rate control** on the phone (or **Start** on the
-   watch). HeartDrive now holds your heart rate at target.
+   watch). HeartDrive warms up for two minutes, then adjusts watts toward your HR band.
 
 The dashboard shows your HR vs. target, the trainer's actual power, the target
 power the loop is commanding, cadence/speed, and a status line
-(*Settling / Holding target / At ceiling / Heart rate lost / Paused*).
+(*Warming up / Following HR / At ceiling / Heart rate lost / Paused*).
 
 The phone **stays awake** automatically while controlling or broadcasting, so
 auto-lock can't drop the watch link or the Zwift broadcast. Keep HeartDrive in
@@ -179,32 +179,25 @@ added to your Apple Watch as a Health Device or open in the Polar app while you 
 
 ## The control loop
 
-Heart rate responds slowly to a power change (~15 s of dead time, ~60 s time
-constant), so a naive controller oscillates. HeartDrive uses a deliberately
-slow, integral-dominant design (derived from published cycle-ergometer HR
-control research):
+Heart rate responds slowly to power changes. For steady Zone 2 rides, HeartDrive
+uses small steps and waits rather than predicting a rider's HR response.
 
-- **PI controller, no derivative**, updated every **5 s** on an EWMA-smoothed HR.
-- **±2.5 bpm deadband** so it doesn't chase noise.
-- **Ramp-limited** to ±5 W up / ±10 W down per update (down faster, so it backs
-  off promptly if your HR spikes).
-- **Power clamped** to your floor/ceiling, with anti-windup (conditional
-  integration + back-calculation) so the integral doesn't overshoot at the limits.
-- **Cardiac drift** (HR creeping up over a long ride) is handled by the integral term, which slowly lowers target power to keep you on target.
+- **Target ±3 BPM:** hold watts inside the band.
+- **Two-minute warm-up:** start at 50% FTP; no increases, but reductions are allowed.
+- **Small adjustments:** after 15 seconds outside the band, change by ±5 W,
+  with at least 30 seconds between normal adjustments.
+- **Sustained excess HR:** at least 10 BPM above target for 15 seconds reduces power
+  by 10 W, at most once every 15 seconds.
+- **Hard bounds:** every command respects the FTP-derived floor and ceiling.
+- **Signal loss/coasting:** hold briefly, then reduce toward the floor. Recovery
+  never jumps back to starting watts. Stale HR and telemetry cannot drive increases.
 
-**Safety guards:**
+The HR target stays adjustable on the phone and watch. There is no Responsiveness
+setting or learned rider model. Select your own appropriate training HR; the app
+cannot determine physiological Zone 2. These safeguards are not medical protection.
 
-- **Stop pedaling → resistance releases.** ERG mode would otherwise ramp
-  resistance toward infinity (the "spiral of death") when cadence hits zero;
-  HeartDrive freezes the controller and drops the trainer to the power floor
-  until you pedal again.
-- **HR dropout** → holds the last power briefly, then bleeds down toward the
-  floor rather than holding a high effort blind.
-
-The **Responsiveness** setting maps to the loop's closed-loop time constant
-(λ): *Gentle* is the smoothest/most stable, *Responsive* is quicker but still
-damped. If you ever see the resistance hunting up and down, choose a gentler
-setting.
+See [the control policy and validation checklist](docs/heart-rate-control.md).
+Run deterministic checks with `bash scripts/test-control.sh`.
 
 ---
 
@@ -218,7 +211,7 @@ Shared/
 HeartDrive/                     iOS app
   Sources/App/                  HeartDriveApp, AppModel (coordinator + control tick)
   Sources/Bluetooth/            FTMS protocol, control strategies, CoreBluetooth manager
-  Sources/Control/              ErgController (the PI loop)
+  Sources/Control/              ErgController (step-and-wait HR control)
   Sources/HeartRate/            HeartRateHub (EWMA + freshness)
   Sources/Connectivity/         PhoneConnectivity (WatchConnectivity)
   Sources/Models/               RideSettings + persistence

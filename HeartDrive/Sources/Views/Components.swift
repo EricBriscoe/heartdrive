@@ -38,8 +38,8 @@ extension ErgControllerState {
     var label: String {
         switch self {
         case .idle: return "Ready"
-        case .settling: return "Settling…"
-        case .tracking: return "Holding target"
+        case .settling: return "Warming up…"
+        case .tracking: return "Following HR"
         case .holdingNoCadence: return "Paused. Pedal to resume"
         case .hrLost: return "Heart rate lost"
         case .atCeiling: return "At power ceiling: HR above target"

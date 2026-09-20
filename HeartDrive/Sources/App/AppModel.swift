@@ -216,20 +216,19 @@ final class AppModel {
             controller.markTargetChanged()
         }
 
-        // Drive the controller on the *actual* elapsed time, clamped so a late or
-        // coalesced tick can't integrate or slew an outsized step at once.
+        // Use elapsed time; the controller caps observation credit for delayed ticks.
         let now = Date()
         let nominal = controller.config.updateInterval
-        let dt = lastTickAt.map { min(max(now.timeIntervalSince($0), 0.5), nominal * 2) } ?? nominal
+        let dt = lastTickAt.map { min(max(now.timeIntervalSince($0), 0), nominal) } ?? 0
         lastTickAt = now
 
         let update = controller.update(
             filteredHR: heart.controlBPM,
-            isPedaling: trainer.isPedaling,
+            isPedaling: trainer.isReady && !trainer.controlConflict && trainer.isPedaling,
             dt: dt)
         lastUpdate = update
 
-        if trainer.isReady {
+        if trainer.isReady && !trainer.controlConflict {
             trainer.setTargetPower(update.targetPower)
         }
 
@@ -253,7 +252,6 @@ final class AppModel {
             targetHeartRate: Double(settings.targetHeartRate),
             powerFloor: settings.powerFloor,
             powerCeiling: settings.powerCeiling,
-            startingPower: settings.startingPower,
-            aggressiveness: settings.aggressiveness)
+            startingPower: settings.startingPower)
     }
 }

@@ -1,9 +1,8 @@
 import Foundation
 import Observation
 
-/// Single source of truth for the rider's heart rate on the phone. Holds the raw
-/// latest value plus an EWMA-smoothed value (the control loop consumes the
-/// smoothed one) and tracks freshness so dropouts and stuck sensors are detected.
+/// Validated, lightly smoothed HR. Freshness requires a recent measurement,
+/// not merely recent delivery of a buffered Watch message.
 @Observable
 final class HeartRateHub {
     private(set) var currentBPM: Double?
@@ -11,53 +10,45 @@ final class HeartRateHub {
     private(set) var lastUpdate: Date?
     private(set) var source: String?
 
-    // The watch already delivers ~5s-averaged HR, so a heavy EWMA here just added
-    // phase lag (~12s) that forced the controller to detune. A light filter keeps the
-    // feedback fresh; the controller's deadband + slew limit absorb the residual noise.
-    @ObservationIgnored var filterTau: Double = 5
-    @ObservationIgnored var staleAfter: TimeInterval = 12
+    @ObservationIgnored private let now: () -> Date
+    @ObservationIgnored private let filterTau = 5.0
+    @ObservationIgnored private let staleAfter = 12.0
     @ObservationIgnored private var lastSampleTime: Date?
-    @ObservationIgnored private var unchangedSince: Date?
-    // A genuinely steady effort can hold the same averaged BPM for a while, so only
-    // treat a reading with an unchanged sample time as stale; a dead/dropped sensor is already caught by
-    // staleAfter (no new samples refreshing lastUpdate).
-    @ObservationIgnored private let stuckTimeout: TimeInterval = 90
+
+    init(now: @escaping () -> Date = Date.init) { self.now = now }
 
     var isFresh: Bool {
-        guard let lastUpdate else { return false }
-        if let unchangedSince, Date().timeIntervalSince(unchangedSince) > stuckTimeout { return false }
-        return Date().timeIntervalSince(lastUpdate) < staleAfter
+        guard let lastUpdate, let lastSampleTime else { return false }
+        let date = now()
+        return date.timeIntervalSince(lastUpdate) < staleAfter
+            && (-2..<staleAfter).contains(date.timeIntervalSince(lastSampleTime))
     }
 
-    /// The value the controller should use, or nil when stale/stuck/absent.
     var controlBPM: Double? { isFresh ? smoothedBPM : nil }
 
     func ingest(bpm: Double, sampleTime: Date, source: String) {
-        // Drop only an exact re-delivery of the sample we already hold; the coalescing
-        // context backstop resends the latest every few seconds. Match on `==`, not `<=`:
-        // a high-water mark let one anomalous (e.g. workout-restart) timestamp reject every
-        // later, lower reading, freezing the display and reporting a false disconnect while
-        // data still flowed. Any new sample time, even a lower one, is now accepted.
-        if let lastSampleTime, sampleTime == lastSampleTime { return }
+        let date = now()
+        guard bpm.isFinite, (30...230).contains(bpm),
+            (-2..<staleAfter).contains(date.timeIntervalSince(sampleTime))
+        else { return }
+        // Reject duplicates and reordering within a source. Source changes reset the
+        // filter; stale high-water marks expire so a clock correction can recover.
+        if self.source == source, let lastSampleTime,
+            date.timeIntervalSince(lastSampleTime) < staleAfter,
+            sampleTime <= lastSampleTime
+        {
+            return
+        }
 
-        let now = Date()
-        if let last = lastUpdate, let previous = smoothedBPM {
-            let dt = max(0.1, now.timeIntervalSince(last))
-            let alpha = 1 - exp(-dt / filterTau)
+        if self.source == source, isFresh, let last = lastSampleTime, let previous = smoothedBPM {
+            let alpha = 1 - exp(-max(0, sampleTime.timeIntervalSince(last)) / filterTau)
             smoothedBPM = previous + alpha * (bpm - previous)
         } else {
             smoothedBPM = bpm
         }
-
-        if currentBPM == bpm {
-            if unchangedSince == nil { unchangedSince = now }
-        } else {
-            unchangedSince = nil
-        }
-
         currentBPM = bpm
         lastSampleTime = sampleTime
-        lastUpdate = now
+        lastUpdate = date
         self.source = source
     }
 
@@ -66,7 +57,6 @@ final class HeartRateHub {
         smoothedBPM = nil
         lastUpdate = nil
         lastSampleTime = nil
-        unchangedSince = nil
         source = nil
     }
 }

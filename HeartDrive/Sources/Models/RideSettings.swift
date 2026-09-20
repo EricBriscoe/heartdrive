@@ -20,16 +20,14 @@ enum HRSource: String, CaseIterable, Codable, Identifiable {
 struct RideSettings: Codable, Equatable {
     var targetHeartRate: Int = 140
     var ftp: Int = 200
-    var aggressiveness: ControlAggressiveness = .balanced
     var hrSource: HRSource = .appleWatch
     var broadcastToZwift: Bool = false
     var cadenceTarget: Int = 90
     var showCadenceGuide: Bool = false
 
     // The whole resistance band is derived from one number (FTP) instead of three separate
-    // settings: a 30% floor, a 150% safety ceiling, and a 50% starting power. 150% sits just
-    // above any power the HR loop would legitimately need (top of the anaerobic zone) and
-    // caps a sensor-glitch runaway well short of an un-pedalable wall.
+    // settings: a 30% floor, a 150% ceiling, and a 50% starting power. These mechanical
+    // bounds are not a guarantee of physiological safety; the rider chooses their HR target.
     static let floorFraction = 0.30
     static let ceilingFraction = 1.50
     static let startFraction = 0.50
@@ -47,9 +45,6 @@ extension RideSettings {
         let defaults = RideSettings()
         targetHeartRate = try container.decodeIfPresent(Int.self, forKey: .targetHeartRate) ?? defaults.targetHeartRate
         ftp = try container.decodeIfPresent(Int.self, forKey: .ftp) ?? defaults.ftp
-        aggressiveness =
-            try container.decodeIfPresent(ControlAggressiveness.self, forKey: .aggressiveness)
-            ?? defaults.aggressiveness
         hrSource = try container.decodeIfPresent(HRSource.self, forKey: .hrSource) ?? defaults.hrSource
         broadcastToZwift =
             try container.decodeIfPresent(Bool.self, forKey: .broadcastToZwift) ?? defaults.broadcastToZwift
@@ -63,7 +58,6 @@ extension RideSettings {
 final class SettingsStore {
     var targetHeartRate: Int
     var ftp: Int
-    var aggressiveness: ControlAggressiveness
     var hrSource: HRSource
     var broadcastToZwift: Bool
     var cadenceTarget: Int
@@ -79,7 +73,6 @@ final class SettingsStore {
         let loaded = SettingsStore.loadSnapshot() ?? RideSettings()
         targetHeartRate = loaded.targetHeartRate
         ftp = loaded.ftp
-        aggressiveness = loaded.aggressiveness
         hrSource = loaded.hrSource
         broadcastToZwift = loaded.broadcastToZwift
         cadenceTarget = loaded.cadenceTarget
@@ -90,7 +83,6 @@ final class SettingsStore {
         RideSettings(
             targetHeartRate: targetHeartRate,
             ftp: ftp,
-            aggressiveness: aggressiveness,
             hrSource: hrSource,
             broadcastToZwift: broadcastToZwift,
             cadenceTarget: cadenceTarget,

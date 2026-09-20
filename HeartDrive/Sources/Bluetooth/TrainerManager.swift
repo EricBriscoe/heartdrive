@@ -32,9 +32,14 @@ final class TrainerManager: NSObject {
 
     var isReady: Bool { connectionState == .connected && controlReady }
     var isPedaling: Bool {
-        if let cadenceRPM { return cadenceRPM > 0.5 }
-        if let powerWatts { return powerWatts > 0 }
-        return true
+        let now = Date()
+        if let cadenceRPM, let lastCadenceAt, now.timeIntervalSince(lastCadenceAt) < 12 {
+            return cadenceRPM > 0.5
+        }
+        if let powerWatts, let lastPowerAt, now.timeIntervalSince(lastPowerAt) < 12 {
+            return powerWatts > 0
+        }
+        return false
     }
 
     private var central: CBCentralManager!
@@ -51,6 +56,8 @@ final class TrainerManager: NSObject {
     private var lastWrittenWatts: Int?
     private var lastWriteAt: Date?
     private var lastIndoorBikeAt: Date?
+    private var lastCadenceAt: Date?
+    private var lastPowerAt: Date?
     private var controlWatchdog: DispatchWorkItem?
     private var recentCommands: [(watts: Int, at: Date)] = []
     private var conflictClearWork: DispatchWorkItem?
@@ -154,6 +161,9 @@ final class TrainerManager: NSObject {
         wahooControl = nil
         powerWatts = nil
         cadenceRPM = nil
+        lastCadenceAt = nil
+        lastPowerAt = nil
+        lastIndoorBikeAt = nil
         speedKPH = nil
         lastWrittenWatts = nil
         controlConflict = false
@@ -318,13 +328,20 @@ extension TrainerManager: CBPeripheralDelegate {
         case BLEUUID.indoorBikeData:
             let parsed = IndoorBikeData.parse(data)
             lastIndoorBikeAt = Date()
-            if let power = parsed.powerWatts { powerWatts = power }
-            if let cadence = parsed.cadenceRPM { cadenceRPM = cadence }
+            if let power = parsed.powerWatts {
+                powerWatts = power
+                lastPowerAt = Date()
+            }
+            if let cadence = parsed.cadenceRPM {
+                cadenceRPM = cadence
+                lastCadenceAt = Date()
+            }
             if let speed = parsed.speedKPH { speedKPH = speed }
         case BLEUUID.cyclingPowerMeasurement:
             let stale = lastIndoorBikeAt.map { Date().timeIntervalSince($0) > 3 } ?? true
             if stale, let power = CyclingPowerMeasurement.instantaneousPower(data) {
                 powerWatts = power
+                lastPowerAt = Date()
             }
         case BLEUUID.fitnessMachineControlPoint:
             guard let response = FTMSResponse(data) else { return }

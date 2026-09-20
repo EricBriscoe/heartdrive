@@ -33,7 +33,7 @@ struct SettingsView: View {
                     Text("Target heart rate")
                 } footer: {
                     Text(
-                        "The app adjusts resistance to hold this heart rate. A ±2–3 bpm deadband prevents constant hunting."
+                        "The app aims to keep you within ±3 bpm of your target. It warms up for 2 minutes, then adjusts by 5 W and waits for your heart rate to respond. Sustained high heart rate reduces power sooner. Choose a target appropriate for your training zone."
                     )
                 }
 
@@ -46,21 +46,6 @@ struct SettingsView: View {
                 } footer: {
                     Text(
                         "Your functional threshold power. The resistance floor (\(settings.powerFloor) W), starting power (\(settings.startingPower) W), and safety ceiling (\(settings.powerCeiling) W) are all set from it; the loop never demands more than the ceiling, even if your heart rate stays below target."
-                    )
-                }
-
-                Section {
-                    Picker("Responsiveness", selection: $settings.aggressiveness) {
-                        ForEach(ControlAggressiveness.allCases) { level in
-                            Text(level.label).tag(level)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                } header: {
-                    Text("Responsiveness")
-                } footer: {
-                    Text(
-                        "How fast resistance chases your heart rate. The app jumps to the predicted power on start and when you change the target, then fine-tunes. Gentle is smoothest; Responsive is quickest but may briefly overshoot."
                     )
                 }
 
