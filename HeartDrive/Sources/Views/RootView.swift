@@ -23,6 +23,7 @@ struct RootView: View {
                         } label: {
                             Image(systemName: "antenna.radiowaves.left.and.right")
                         }
+                        .accessibilityLabel("Connect trainer")
                     }
                     ToolbarItem(placement: .topBarTrailing) {
                         Button {
@@ -30,6 +31,7 @@ struct RootView: View {
                         } label: {
                             Image(systemName: "gearshape")
                         }
+                        .accessibilityLabel("Settings")
                     }
                 }
                 .sheet(isPresented: $showSettings) {

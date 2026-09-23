@@ -1,0 +1,8 @@
+{
+  "path": ["HeartDrive/Sources", "HeartDriveWatch/Sources", "Shared", "Tools"],
+  "ignore": ["**/.build/**"],
+  "format": ["swift"],
+  "minLines": 6,
+  "minTokens": 60,
+  "reporters": ["console", "json"]
+}

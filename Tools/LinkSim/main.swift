@@ -6,21 +6,22 @@ import Foundation
 final class Sim {
     var now = 0.0
     let transport = FlakyTransport()
-    let receiver: HeartRateReceiver
-    var sender: HeartRateSender!
+    lazy var receiver = HeartRateHub(now: { [unowned self] in Date(timeIntervalSince1970: self.now) })
+    var sender: LinkDriver!
     var restarts = 0
     var hrSuppressed = false
-    private var bpm = 78.0
 
-    init(contextInterval: TimeInterval, staleAfter: TimeInterval = 12, enableHealing: Bool = true) {
-        receiver = HeartRateReceiver(staleAfter: staleAfter)
+    init(contextInterval: TimeInterval, enableHealing: Bool = true) {
         transport.clock = { [unowned self] in self.now }
-        transport.onDeliver = { [unowned self] hr in self.receiver.ingest(hr, now: self.now) }
-        sender = HeartRateSender(transport: transport, contextInterval: contextInterval, enableHealing: enableHealing)
+        transport.onDeliver = { [unowned self] hr in
+            self.receiver.ingest(bpm: hr.bpm, sampleTime: hr.at, source: "watch")
+        }
+        sender = LinkDriver(transport: transport, contextInterval: contextInterval, enableHealing: enableHealing)
         sender.onRequestRestart = { [unowned self] in
             self.restarts += 1
             // A workout restart re-activates the session (clears a soft wedge) and the
             // fresh workout resumes HR immediately. Model that as a re-activation.
+            self.sender.reset()
             self.transport.activate()
         }
         transport.activate()
@@ -44,15 +45,15 @@ final class Sim {
                 if hrSuppressed {
                     nextHR = now + hrInterval
                 } else {
-                    bpm += Double((Int(now) % 5) - 2)
-                    sender.record(HeartRate(bpm: bpm, at: now), now: now)
+                    let bpm = 100 + 15 * sin(now / 20)
+                    sender.record(HeartRate(bpm: bpm, at: Date(timeIntervalSince1970: now)), now: now)
                     nextHR += hrInterval
                 }
             }
             if now >= nextTick { sender.tick(now: now); nextTick += 2 }
             transport.pump(now: now)
             if transport.wedged { r.wedged = true }
-            let fresh = receiver.isFresh(now: now)
+            let fresh = receiver.isFresh
             if now > 8, capable {
                 if !fresh { if staleSince == nil { staleSince = now } }
                 else if let s = staleSince { r.maxStaleGap = max(r.maxStaleGap, now - s); staleSince = nil }
@@ -140,7 +141,7 @@ do {
         return !black
     }
     expect("recovers, no permanent stall", r.maxStaleGap < stale, "max stale (capable windows) \(gap(r.maxStaleGap))")
-    expect("fresh at end", s.receiver.isFresh(now: s.now), "fresh=\(s.receiver.isFresh(now: s.now))")
+    expect("fresh at end", s.receiver.isFresh, "fresh=\(s.receiver.isFresh)")
 }
 
 print("\n# 8. Bursty HR (samples every 0.3s)")
@@ -166,7 +167,7 @@ do {
     let s = Sim(contextInterval: 5)
     let r = s.run(150) { sim in sim.hrSuppressed = (sim.now >= 50 && sim.now < 80); return true }
     expect("detects capture stall + requests restart", r.restarts >= 1, "restarts=\(r.restarts)")
-    expect("recovers when samples return", s.receiver.isFresh(now: s.now), "fresh=\(s.receiver.isFresh(now: s.now))")
+    expect("recovers when samples return", s.receiver.isFresh, "fresh=\(s.receiver.isFresh)")
 }
 
 print("\n# 11. Delayed activation (transport not activated until t=6s)")
@@ -175,6 +176,15 @@ do {
     s.transport.isActivated = false
     let r = s.run(120) { sim in if sim.now >= 6, !sim.transport.isActivated { sim.transport.activate() }; return sim.transport.isActivated }
     expect("recovers once activated", r.maxStaleGap < stale, "max stale (active windows) \(gap(r.maxStaleGap))")
+}
+
+print("\n# 11b. Asynchronous live acknowledgements")
+do {
+    let s = Sim(contextInterval: 5)
+    s.transport.acknowledgementLatency = 4
+    let r = s.run(120)
+    expect("delayed replies preserve delivery health", r.restarts == 0, "restarts=\(r.restarts)")
+    expect("delayed replies do not block samples", s.receiver.isFresh, "fresh=\(s.receiver.isFresh)")
 }
 
 // Tiny seeded PRNG for deterministic fuzzing.
@@ -202,7 +212,10 @@ do {
             return !black
         }
         worst = max(worst, r.maxStaleGap)
-        if r.maxStaleGap >= stale { stalls += 1 }
+        if r.maxStaleGap >= stale {
+            stalls += 1
+            print("Replay failing seed: \(seed), stale gap: \(r.maxStaleGap)")
+        }
     }
     expect("no permanent stall in any of 300 random runs", stalls == 0, "\(stalls)/300 stalled; worst gap \(gap(worst))")
 }
@@ -214,4 +227,4 @@ if !failed.isEmpty {
     failed.forEach { print("  - \($0.name): \($0.detail)") }
     exit(1)
 }
-print("ALL GREEN: wrapper survives every injected failure mode")
+print("ALL GREEN: production policy passes the simulated failure scenarios")

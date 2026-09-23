@@ -8,7 +8,7 @@ import Foundation
 ///  - the CONTEXT WEDGE: driving `updateContext` faster than `wedgeMinInterval` builds
 ///    pressure and silently wedges context delivery until the session is re-activated
 ///    (the exact rdar://21364664 behavior that caused "works then stalls").
-public final class FlakyTransport: HRTransport {
+final class FlakyTransport {
     public var clock: () -> TimeInterval = { 0 }
     public var onDeliver: ((HeartRate) -> Void)?
 
@@ -34,12 +34,15 @@ public final class FlakyTransport: HRTransport {
         if !blackout { wedged = false; pressure = 0 }   // re-activation clears a soft wedge
     }
 
-    @discardableResult public func sendMessage(_ hr: HeartRate) -> Bool {
+    func sendMessage(_ hr: HeartRate, delivered: @escaping (TimeInterval) -> Void) {
         sendMessageCalls += 1
-        guard isActivated, reachable, !blackout, sendMessageWorks else { return false }
+        guard isActivated, reachable, !blackout, sendMessageWorks else { return }
         onDeliver?(hr)
-        return true
+        pendingAcks.append((clock() + acknowledgementLatency, delivered))
     }
+
+    var acknowledgementLatency: TimeInterval = 0
+    private var pendingAcks: [(at: TimeInterval, deliver: (TimeInterval) -> Void)] = []
 
     public func updateContext(_ hr: HeartRate) {
         guard isActivated else { return }
@@ -58,9 +61,12 @@ public final class FlakyTransport: HRTransport {
 
     /// Driver pumps due context deliveries.
     public func pump(now: TimeInterval) {
+        let due = pendingAcks.filter { $0.at <= now }
+        pendingAcks.removeAll { $0.at <= now }
+        if !blackout { due.forEach { $0.deliver(now) } }
         if let p = pending, p.at <= now {
             pending = nil
-            onDeliver?(p.hr)
+            if !blackout { onDeliver?(p.hr) }
         }
     }
 }

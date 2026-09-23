@@ -11,16 +11,10 @@ enum TrainerConnectionState: Equatable {
     case connected
 }
 
-struct DiscoveredTrainer: Identifiable, Equatable {
-    let id: UUID
-    let name: String
-    var rssi: Int
-}
-
 @Observable
 final class TrainerManager: NSObject {
     private(set) var connectionState: TrainerConnectionState = .idle
-    private(set) var discovered: [DiscoveredTrainer] = []
+    private(set) var discovered: [DiscoveredDevice] = []
     private(set) var controlReady = false
     private(set) var controlModeName: String?
     private(set) var statusMessage: String?
@@ -45,7 +39,6 @@ final class TrainerManager: NSObject {
     private var central: CBCentralManager!
     private var peripheralsByID: [UUID: CBPeripheral] = [:]
     private var connected: CBPeripheral?
-    private var intentionalDisconnect = false
 
     private var strategy: ErgControlStrategy?
     private var controlChar: CBCharacteristic?
@@ -83,18 +76,10 @@ final class TrainerManager: NSObject {
         if connectionState == .scanning { connectionState = .idle }
     }
 
-    func connect(_ trainer: DiscoveredTrainer) {
+    func connect(_ trainer: DiscoveredDevice) {
         guard let peripheral = peripheralsByID[trainer.id] else { return }
         connect(peripheral)
         UserDefaults.standard.set(trainer.id.uuidString, forKey: savedTrainerKey)
-    }
-
-    func disconnect() {
-        intentionalDisconnect = true
-        if let connected { central.cancelPeripheralConnection(connected) }
-        resetConnectionState()
-        connectionState = .idle
-        statusMessage = nil
     }
 
     func setTargetPower(_ watts: Int) {
@@ -130,7 +115,6 @@ final class TrainerManager: NSObject {
     }
 
     private func connect(_ peripheral: CBPeripheral) {
-        intentionalDisconnect = false
         central.stopScan()
         connected = peripheral
         peripheral.delegate = self
@@ -245,7 +229,7 @@ extension TrainerManager: CBCentralManagerDelegate {
     ) {
         let name = peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? "Trainer"
         peripheralsByID[peripheral.identifier] = peripheral
-        let entry = DiscoveredTrainer(id: peripheral.identifier, name: name, rssi: RSSI.intValue)
+        let entry = DiscoveredDevice(id: peripheral.identifier, name: name, rssi: RSSI.intValue)
         if let index = discovered.firstIndex(where: { $0.id == entry.id }) {
             discovered[index].rssi = entry.rssi
         } else {
@@ -267,14 +251,9 @@ extension TrainerManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         resetConnectionState()
-        if intentionalDisconnect {
-            connected = nil
-            connectionState = .idle
-        } else {
-            connectionState = .connecting
-            statusMessage = "Reconnecting…"
-            central.connect(peripheral, options: nil)
-        }
+        connectionState = .connecting
+        statusMessage = "Reconnecting…"
+        central.connect(peripheral, options: nil)
     }
 }
 

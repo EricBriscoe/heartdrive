@@ -1,18 +1,9 @@
 import Foundation
 import WatchConnectivity
 
-/// Watch→phone heart-rate sender; this is the only link between the devices. Tools/LinkSim covers
-/// context wedge, reachability flap, transient send failures, blackout, capture stall,
-/// bursts, and 300 randomized runs.
-///
-/// Strategy:
-///  - live HR over `sendMessage` when reachable (throttled to `liveInterval`); the phone
-///    replies, which is the only reliable delivery confirmation
-///  - a coalescing `updateApplicationContext` backstop runs at most once per `contextInterval`.
-///    Driving it faster silently wedges the channel (rdar://21364664), the original bug
-///  - self-heal: re-activate the session on a sustained delivery gap, and ask the owner
-///    to restart the workout if delivery or HR capture stays dead, matching
-///    what the manual Restart button does.
+/// WCSession adapter for the production HeartRateLink policy exercised by LinkSim.
+/// All mutable state is confined to the main queue. There is one coalesced context
+/// writer for HR and settings, so separate updates cannot exceed the channel limit.
 final class WatchConnectivityManager: NSObject {
     var onRequestRestart: (() -> Void)?
     /// Called on the main queue when an accepted register update arrives from the phone.
@@ -25,20 +16,8 @@ final class WatchConnectivityManager: NSObject {
     let active = SyncedValue<Bool>(me: .watch)
 
     private var session: WCSession?
-    private var latest: HeartRate?
+    private var link = HeartRateLink()
     private var tickTimer: Timer?
-
-    private let liveInterval: TimeInterval = 1
-    private let contextInterval: TimeInterval = 5
-    private let reactivateAfter: TimeInterval = 8
-    private let restartAfter: TimeInterval = 24
-    private let captureStallAfter: TimeInterval = 20
-
-    private var lastContextAt = -Double.infinity
-    private var lastLiveSendAt = -Double.infinity
-    private var lastDeliveredAt = -Double.infinity
-    private var lastRecordAt = -Double.infinity
-    private var lastReactivateAt = -Double.infinity
 
     private var now: TimeInterval { ProcessInfo.processInfo.systemUptime }
 
@@ -56,15 +35,8 @@ final class WatchConnectivityManager: NSObject {
 
     /// Call on every new HR sample.
     func record(_ hr: HeartRate) {
-        // Drop only an exact re-delivery of the sample we already hold (the workout builder
-        // can re-emit the same statistic). Match on `==`, not a `<=` high-water mark: that
-        // could latch on one anomalous timestamp and permanently reject the stream. This is the bug
-        // that froze the phone hub. A restart clears this via `resetStream()`.
-        if let latest, hr.at == latest.at { return }
         let t = now
-        if latest == nil { lastDeliveredAt = t; lastReactivateAt = t }
-        latest = hr
-        lastRecordAt = t
+        guard link.record(hr, now: t) else { return }
         push(t)
     }
 
@@ -72,10 +44,7 @@ final class WatchConnectivityManager: NSObject {
     /// workout's HR stream is treated as a clean start: no stale high-water mark to reject it,
     /// and no inherited delivery gap that would make `heal()` immediately re-fire.
     func resetStream() {
-        latest = nil
-        lastDeliveredAt = -.infinity
-        lastRecordAt = -.infinity
-        lastReactivateAt = -.infinity
+        link.reset()
     }
 
     /// A local target edit (Digital Crown). Bumps the register and pushes it promptly, with an
@@ -124,8 +93,8 @@ final class WatchConnectivityManager: NSObject {
         let t = now
         push(t)
         heal(t)
-        if latest != nil, let session {
-            let ackGap = Int(t - lastDeliveredAt), recGap = Int(t - lastRecordAt), reach = session.isReachable
+        if link.latest != nil, let session {
+            let ackGap = Int(t - link.lastDeliveredAt), recGap = Int(t - link.lastRecordAt), reach = session.isReachable
             hrLog.debug("watch HB reach=\(reach, privacy: .public) ackGap=\(ackGap, privacy: .public)s recGap=\(recGap, privacy: .public)s")
         }
     }
@@ -137,57 +106,39 @@ final class WatchConnectivityManager: NSObject {
         // register in one coalesced, rate-limited dictionary. A second context writer would
         // risk the over-1/5s wedge (rdar://21364664), so there is exactly one.
         var context: [String: Any] = [:]
-        if let hr = latest, let d = WCSession.encode(hr) { context[WCKey.heartRate] = d }
+        if let hr = link.latest, let d = WCSession.encode(hr) { context[WCKey.heartRate] = d }
         if let reg = target.register, let d = WCSession.encode(reg) { context[WCKey.target] = d }
         if let reg = active.register, let d = WCSession.encode(reg) { context[WCKey.active] = d }
         guard !context.isEmpty else { return }
 
         // Live HR nudge over sendMessage when reachable; the phone's reply is the delivery
         // signal. Throttled; the context backstop covers anything it misses.
-        if let hr = latest, session.isReachable, t - lastLiveSendAt >= liveInterval,
-            let d = WCSession.encode(hr) {
-            lastLiveSendAt = t
+        let send = link.send(now: t, activated: true, reachable: session.isReachable,
+                             hasRegisters: target.register != nil || active.register != nil)
+        let generation = link.generation
+        if let hr = send.live, let d = WCSession.encode(hr) {
             session.sendMessage([WCKey.heartRate: d], replyHandler: { [weak self] _ in
-                guard let self else { return }
-                DispatchQueue.main.async { self.lastDeliveredAt = self.now }
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.link.delivered(now: self.now, generation: generation)
+                }
             }, errorHandler: { error in
                 hrLog.error("watch: sendMessage failed: \(error.localizedDescription, privacy: .public)")
             })
         }
 
-        if t - lastContextAt >= contextInterval {
-            lastContextAt = t
-            try? session.updateApplicationContext(context)
-        }
+        if send.context { try? session.updateApplicationContext(context) }
     }
 
     private func heal(_ t: TimeInterval) {
-        // HR capture itself stalled (no new sample): only a fresh workout revives it.
-        if lastRecordAt > -.infinity, t - lastRecordAt > captureStallAfter {
-            hrLog.notice("watch: HR capture stalled → restart")
+        switch link.recover(now: t, reachable: session?.isReachable ?? false) {
+        case .restart:
+            hrLog.notice("watch: HR capture or live delivery stalled → restart")
             onRequestRestart?()
-            lastRecordAt = t
-            return
-        }
-        guard latest != nil, let session else { return }
-        let gap = t - lastDeliveredAt
-        if session.isReachable {
-            if gap > restartAfter {
-                hrLog.notice("watch: live delivery dead \(Int(gap), privacy: .public)s → restart")
-                onRequestRestart?()
-                lastDeliveredAt = t
-                lastReactivateAt = t
-            } else if gap > reactivateAfter, t - lastReactivateAt > reactivateAfter {
-                hrLog.notice("watch: re-activate (reachable, ackGap \(Int(gap), privacy: .public)s)")
-                session.activate()
-                lastReactivateAt = t
-            }
-        } else if t - lastReactivateAt > reactivateAfter {
-            // Unreachable: the context backstop carries HR; nudge the session to try to
-            // regain the live path, but never restart on unreachability alone.
-            hrLog.notice("watch: re-activate (unreachable, ackGap \(Int(gap), privacy: .public)s)")
-            session.activate()
-            lastReactivateAt = t
+        case .reactivate:
+            session?.activate()
+        case nil:
+            break
         }
     }
 }

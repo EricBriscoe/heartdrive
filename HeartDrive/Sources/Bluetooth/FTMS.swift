@@ -36,7 +36,11 @@ private struct ByteReader {
     }
 
     mutating func u16() -> Int? {
-        guard remaining >= 2 else { return nil }
+        guard remaining >= 2 else {
+            // A truncated field consumes the tail; later fields cannot reuse it.
+            index = bytes.count
+            return nil
+        }
         defer { index += 2 }
         return Int(bytes[index]) | (Int(bytes[index + 1]) << 8)
     }
@@ -46,7 +50,7 @@ private struct ByteReader {
         return Int(Int16(bitPattern: UInt16(value)))
     }
 
-    mutating func skip(_ count: Int) { index += count }
+    mutating func skip(_ count: Int) { index += min(count, remaining) }
 }
 
 /// FTMS Indoor Bike Data (0x2AD2): a uint16 flags field followed by optional
@@ -55,7 +59,6 @@ struct IndoorBikeData {
     var speedKPH: Double?
     var cadenceRPM: Double?
     var powerWatts: Int?
-    var heartRate: Int?
 
     static func parse(_ data: Data) -> IndoorBikeData {
         var reader = ByteReader(data)
@@ -70,9 +73,8 @@ struct IndoorBikeData {
         if flags & 0x0010 != 0 { reader.skip(3) }  // total distance (uint24)
         if flags & 0x0020 != 0 { _ = reader.i16() }  // resistance level
         if flags & 0x0040 != 0 { result.powerWatts = reader.i16() }  // instantaneous power
-        if flags & 0x0080 != 0 { _ = reader.i16() }  // average power
-        if flags & 0x0100 != 0 { reader.skip(5) }  // expended energy
-        if flags & 0x0200 != 0, let hr = reader.u8() { result.heartRate = hr }
+        // Remaining fields are not used. HR comes from the selected watch or
+        // dedicated monitor, never from the trainer's optional HR field.
         return result
     }
 }

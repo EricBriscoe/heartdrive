@@ -27,8 +27,6 @@ final class ControlLogger {
         return f
     }()
 
-    var isLogging: Bool { handle != nil }
-
     /// Open a fresh CSV for a new ride session. No-ops (logging just stays off) if the file can't
     /// be created, so a logging failure can never take down a ride.
     func start(at now: Date = Date()) {

@@ -1,0 +1,7 @@
+project: HeartDrive.xcodeproj
+schemes:
+  - HeartDrive
+retain_codable_properties: true
+disable_update_check: true
+# WatchKit callback exceptions are documented at their declarations, not hidden
+# behind a blanket NSObject/Objective-C exclusion.

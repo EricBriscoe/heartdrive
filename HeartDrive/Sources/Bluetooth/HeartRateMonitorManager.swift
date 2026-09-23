@@ -12,12 +12,6 @@ enum HRMonitorConnectionState: Equatable {
     case connected
 }
 
-struct DiscoveredHRMonitor: Identifiable, Equatable {
-    let id: UUID
-    let name: String
-    var rssi: Int
-}
-
 /// Reads heart rate from a standard BLE heart-rate monitor (GATT Heart Rate Service 0x180D,
 /// Heart Rate Measurement 0x2A37) as an alternative to the Apple Watch. A read-only mirror of
 /// `TrainerManager`'s central pattern (scan → connect → subscribe → parse → emit) with none of
@@ -26,7 +20,7 @@ struct DiscoveredHRMonitor: Identifiable, Equatable {
 @Observable
 final class HeartRateMonitorManager: NSObject {
     private(set) var connectionState: HRMonitorConnectionState = .idle
-    private(set) var discovered: [DiscoveredHRMonitor] = []
+    private(set) var discovered: [DiscoveredDevice] = []
     private(set) var connectedName: String?
     private(set) var statusMessage: String?
 
@@ -42,14 +36,11 @@ final class HeartRateMonitorManager: NSObject {
     private(set) var lastBPM: Int?
     private(set) var lastBPMAt: Date?
 
-    var isConnected: Bool { connectionState == .connected }
-
     private static let log = Logger(subsystem: "com.ericbriscoe.HeartDrive", category: "hrm")
 
     private var central: CBCentralManager!
     private var peripheralsByID: [UUID: CBPeripheral] = [:]
     private var connected: CBPeripheral?
-    private var intentionalDisconnect = false
 
     private let savedMonitorKey = "pairedHRMonitorID"
 
@@ -72,21 +63,10 @@ final class HeartRateMonitorManager: NSObject {
         if connectionState == .scanning { connectionState = connected == nil ? .idle : .connected }
     }
 
-    func connect(_ monitor: DiscoveredHRMonitor) {
+    func connect(_ monitor: DiscoveredDevice) {
         guard let peripheral = peripheralsByID[monitor.id] else { return }
         connect(peripheral)
         UserDefaults.standard.set(monitor.id.uuidString, forKey: savedMonitorKey)
-    }
-
-    func disconnect() {
-        Self.log.info("disconnect requested")
-        intentionalDisconnect = true
-        if let connected { central.cancelPeripheralConnection(connected) }
-        connected = nil
-        connectedName = nil
-        connectionState = .idle
-        statusMessage = nil
-        UserDefaults.standard.removeObject(forKey: savedMonitorKey)
     }
 
     /// Reconnect to the previously paired monitor, if Bluetooth is on and one was saved. Safe to
@@ -105,7 +85,6 @@ final class HeartRateMonitorManager: NSObject {
     }
 
     private func connect(_ peripheral: CBPeripheral) {
-        intentionalDisconnect = false
         central.stopScan()
         connected = peripheral
         peripheral.delegate = self
@@ -141,7 +120,7 @@ extension HeartRateMonitorManager: CBCentralManagerDelegate {
     ) {
         let name = peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String) ?? "Heart-rate monitor"
         peripheralsByID[peripheral.identifier] = peripheral
-        let entry = DiscoveredHRMonitor(id: peripheral.identifier, name: name, rssi: RSSI.intValue)
+        let entry = DiscoveredDevice(id: peripheral.identifier, name: name, rssi: RSSI.intValue)
         if let index = discovered.firstIndex(where: { $0.id == entry.id }) {
             discovered[index].rssi = entry.rssi
         } else {
@@ -165,19 +144,14 @@ extension HeartRateMonitorManager: CBCentralManagerDelegate {
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
         Self.log.notice(
-            "disconnected (\(self.intentionalDisconnect ? "intentional" : "unexpected", privacy: .public)): \(error?.localizedDescription ?? "no error", privacy: .public)"
+            "disconnected: \(error?.localizedDescription ?? "no error", privacy: .public)"
         )
         connectedName = nil
         lastBPM = nil
         lastBPMAt = nil
-        if intentionalDisconnect {
-            connected = nil
-            connectionState = .idle
-        } else {
-            connectionState = .connecting
-            statusMessage = "Reconnecting…"
-            central.connect(peripheral, options: nil)
-        }
+        connectionState = .connecting
+        statusMessage = "Reconnecting…"
+        central.connect(peripheral, options: nil)
     }
 }
 

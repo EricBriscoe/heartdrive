@@ -1,6 +1,4 @@
 import Foundation
-import WatchConnectivity
-import os
 
 /// A heart-rate reading, streamed one-way (watch→phone). `at` is the sample's measurement
 /// time. The phone orders and deduplicates by it, keeping each fresh payload unique
@@ -75,27 +73,3 @@ final class SyncedValue<Value: Codable & Equatable> {
         return register!.merge(incoming) ? register!.value : nil
     }
 }
-
-/// Keys for the multiplexed WCSession payloads. A single application-context dictionary can
-/// carry several at once; there is exactly one rate-limited context writer per device, so a
-/// second one can't reopen the over-1/5s wedge (rdar://21364664).
-enum WCKey {
-    static let heartRate = "hr"
-    static let target = "cfg"
-    static let active = "run"
-}
-
-extension WCSession {
-    static func encode<T: Encodable>(_ value: T) -> Data? {
-        try? JSONEncoder().encode(value)
-    }
-
-    static func decode<T: Decodable>(_ type: T.Type, from value: Any?) -> T? {
-        guard let data = value as? Data else { return nil }
-        return try? JSONDecoder().decode(type, from: data)
-    }
-}
-
-/// Shared os_log channel so the link can be verified on-device. Stream with:
-/// `log stream --predicate 'subsystem == "com.ericbriscoe.HeartDrive"'`.
-let hrLog = Logger(subsystem: "com.ericbriscoe.HeartDrive", category: "hr")
